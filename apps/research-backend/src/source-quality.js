@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { hostnameFromUrl, normalizeDomain } from "./lib/utils.js";
+import { ageInDays, hostnameFromUrl, normalizeDomain, versionHintFromUrl } from "./lib/utils.js";
 
 const rulesPath = process.env.SOURCE_QUALITY_RULES_PATH
 	? resolve(process.cwd(), process.env.SOURCE_QUALITY_RULES_PATH)
@@ -57,7 +57,7 @@ export function classifySourceCategory(input) {
 	if (host.endsWith(".go.id") || host.endsWith(".gov") || host.endsWith(".gov.uk")) return "official-government";
 	if (looksLikeReleaseNotes(lowerUrl, lowerTitle)) return "release-notes";
 	if (MAJOR_MEDIA_DOMAINS.some((domain) => domainMatchesHost(host, domain))) return "major-media";
-	if (FORUM_DOMAINS.some((domain) => domainMatchesHost(host, domain)) || host.startsWith("community.")) return "forum-community";
+	if (FORUM_DOMAINS.some((domain) => domainMatchesHost(host, domain)) || host.startsWith("community.") || /\bcommunity\b|\bdiscussion\b|\bforum\b/.test(lowerTitle)) return "forum-community";
 	if (looksLikeVendorBlog(host, lowerUrl)) return "vendor-blog";
 	if (looksLikeTechBlog(host, lowerUrl)) return "secondary-tech-blog";
 	return "unknown-low-trust";
@@ -236,6 +236,27 @@ export function canonicalHintScore(input, queryMode = "general", constraintProfi
 	return score;
 }
 
+export function buildTrustSignals(input = {}) {
+	const sourceCategory = input.sourceCategory || classifySourceCategory(input);
+	const authorityScore = normalizeAuthorityScore(authorityWeight(sourceCategory));
+	const authority = authorityLevel(authorityScore);
+	const ageDays = ageInDays(input.publishedAt);
+	const official = ["official-docs", "official-government", "release-notes", "github-repo"].includes(sourceCategory);
+	const freshness = classifyFreshness(ageDays);
+	const likelyOutdated = Boolean(ageDays != null && ageDays > 365 && ["official-docs", "release-notes", "github-repo", "vendor-blog", "secondary-tech-blog"].includes(sourceCategory));
+	const versionHint = versionHintFromUrl(input.url);
+	return {
+		authority,
+		authorityScore,
+		official,
+		community: ["forum-community", "secondary-tech-blog", "github-issue", "github-discussion"].includes(sourceCategory),
+		freshness,
+		ageDays,
+		likelyOutdated,
+		versionHint,
+	};
+}
+
 export function isAuthoritativeCategory(category) {
 	return [
 		"official-docs",
@@ -250,6 +271,24 @@ export function isAuthoritativeCategory(category) {
 		"github-discussion",
 		"github-repo",
 	].includes(category);
+}
+
+function normalizeAuthorityScore(weight) {
+	return Math.max(0, Math.min(100, 50 + Number(weight || 0) * 2));
+}
+
+function authorityLevel(score) {
+	if (score >= 80) return "high";
+	if (score >= 60) return "medium";
+	return "low";
+}
+
+function classifyFreshness(ageDays) {
+	if (ageDays == null) return "unknown";
+	if (ageDays <= 30) return "fresh";
+	if (ageDays <= 180) return "recent";
+	if (ageDays <= 365) return "aging";
+	return "stale";
 }
 
 function looksLikeOfficialDocs(host, lowerUrl, lowerTitle) {

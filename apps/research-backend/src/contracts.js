@@ -21,12 +21,12 @@ const DEFAULT_HINTS = {
 	research: {
 		recommendedNextTools: ["analyze_sources"],
 		suitableFor: ["general-research", "deep-research", "decision-support", "downstream-extension-input"],
-		stableFields: ["answer", "recommendation", "summary", "bestPractices", "tradeOffs", "risks", "mitigations", "sources", "confidence", "gaps"],
+		stableFields: ["answer", "recommendation", "summary", "bestPractices", "tradeOffs", "risks", "mitigations", "sources", "confidence", "gaps", "failures", "retrySuggestions"],
 	},
 	analyze: {
 		recommendedNextTools: [],
-		suitableFor: ["source-comparison", "downstream-extension-input"],
-		stableFields: ["summary", "agreements", "disagreements", "strongestEvidence", "gaps", "sources"],
+		suitableFor: ["source-comparison", "decision-support", "downstream-extension-input"],
+		stableFields: ["summary", "agreements", "disagreements", "strongestEvidence", "officialPosition", "communityPosition", "recommendation", "uncertainties", "gaps", "sources"],
 	},
 };
 
@@ -56,6 +56,8 @@ export function buildResearchResponseSections(result = {}) {
 		Array.isArray(result.sources) && result.sources.length ? "sources" : undefined,
 		result.confidence ? "confidence" : undefined,
 		Array.isArray(result.gaps) && result.gaps.length ? "gaps" : undefined,
+		Array.isArray(result.failures) && result.failures.length ? "failures" : undefined,
+		Array.isArray(result.retrySuggestions) && result.retrySuggestions.length ? "retrySuggestions" : undefined,
 	].filter(Boolean);
 }
 
@@ -65,6 +67,10 @@ export function buildAnalyzeResponseSections(result = {}) {
 		Array.isArray(result.agreements) && result.agreements.length ? "agreements" : undefined,
 		Array.isArray(result.disagreements) && result.disagreements.length ? "disagreements" : undefined,
 		Array.isArray(result.strongestEvidence) && result.strongestEvidence.length ? "strongestEvidence" : undefined,
+		result.officialPosition ? "officialPosition" : undefined,
+		result.communityPosition ? "communityPosition" : undefined,
+		result.recommendation ? "recommendation" : undefined,
+		Array.isArray(result.uncertainties) && result.uncertainties.length ? "uncertainties" : undefined,
 		Array.isArray(result.gaps) && result.gaps.length ? "gaps" : undefined,
 		Array.isArray(result.sources) && result.sources.length ? "sources" : undefined,
 	].filter(Boolean);

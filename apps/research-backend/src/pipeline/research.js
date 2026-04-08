@@ -2,12 +2,14 @@ import { fetchRenderedPage } from "../adapters/browser/playwright.js";
 import { searchSearxng } from "../adapters/discovery/searxng.js";
 import { searchGitHubWeb } from "../adapters/discovery/github-web.js";
 import { fetchDirect } from "../adapters/extraction/direct.js";
+import { extractStructuredContent } from "../adapters/extraction/structured.js";
+import { classifyFetchError } from "../errors.js";
 import { stableCacheKey } from "../lib/cache.js";
 import { buildQueryPlan } from "../query-planner.js";
 import { bestSentences, cleanupWhitespace, extractCallouts, extractCanonicalUrl, extractCodeBlocks, extractHeadings, extractTitle, htmlToText, splitSentences, topKeywords } from "../lib/text.js";
-import { clip, domainMatches, hostnameFromUrl } from "../lib/utils.js";
+import { clip, comparableUrlKey, domainMatches, hostnameFromUrl } from "../lib/utils.js";
 import { detectDisagreementSignals, rankFetchedSources, rankSearchResults, summarizeSourceCategories, summarizeSourceTypes } from "../ranking.js";
-import { classifySourceCategory, inferSourceType, isAuthoritativeCategory } from "../source-quality.js";
+import { buildTrustSignals, classifySourceCategory, inferSourceType, isAuthoritativeCategory } from "../source-quality.js";
 
 export async function searchWorkflow(config, params, helpers) {
 	if (!config.searxngUrl) {
@@ -91,6 +93,7 @@ export async function fetchWorkflow(config, params, helpers) {
 	const directMemo = async () => {
 		const direct = await fetchDirect(config, params.url, params.extractionProfile, helpers.fetchWithTimeout, params.signal);
 		const content = clip(direct.text, 16000);
+		const extractionConfidence = direct.metadata?.extractionConfidence || inferExtractionConfidence(content);
 		return {
 			url: params.url,
 			canonicalUrl: direct.canonicalUrl,
@@ -101,10 +104,21 @@ export async function fetchWorkflow(config, params, helpers) {
 			contentType: direct.contentType,
 			status: direct.status,
 			metadata: {
-				strategy: direct.variant?.startsWith("docs-markdown") ? "docs-markdown-fetch" : "direct-fetch",
+				strategy: direct.metadata?.strategy || (direct.variant?.startsWith("docs-markdown") ? "docs-markdown-fetch" : "direct-fetch"),
 				sourceVariant: direct.variant,
 				resolvedUrl: direct.resolvedUrl,
+				frameworkHints: direct.metadata?.frameworkHints || [],
+				extractionConfidence,
+				shellLikelihood: direct.metadata?.shellLikelihood,
+				fallbackRecommendations: buildFetchFallbackRecommendations({
+					mode: params.mode,
+					extractionConfidence,
+					shellLikelihood: direct.metadata?.shellLikelihood,
+					frameworkHints: direct.metadata?.frameworkHints,
+					strategy: direct.metadata?.strategy,
+				}),
 				codeAware: buildCodeAwareMetadata(direct.html, content, params.extractionProfile),
+				diagnostics: direct.metadata?.diagnostics,
 			},
 		};
 	};
@@ -173,8 +187,15 @@ export async function researchWorkflow(config, params, helpers) {
 	const startedAt = Date.now();
 	const questionPlan = buildQueryPlan({ query: params.question, mode: params.mode, preferredDomains: params.preferredDomains || [] });
 	const { value, cache } = await memo(helpers, "research", key, config.researchCacheTtlMs, async () => {
-		const search = await performResearchDiscovery(config, params, questionPlan, helpers);
-		const initialCandidates = search.results.slice(0, Math.min(config.maxFetchedSources, Math.max(params.numberOfSources * 2, params.numberOfSources + 4, 6)));
+		let search;
+		const failures = [];
+		try {
+			search = await performResearchDiscovery(config, params, questionPlan, helpers);
+		} catch (error) {
+			failures.push(normalizeFailure("discovery", error, { question: params.question }));
+			search = { status: "failure", results: [], errors: failures, diagnostics: { plan: questionPlan, searches: [] } };
+		}
+		const initialCandidates = (search.results || []).slice(0, Math.min(config.maxFetchedSources, Math.max(params.numberOfSources * 2, params.numberOfSources + 4, 6)));
 		const fetched = [];
 		for (const candidate of initialCandidates) {
 			try {
@@ -196,9 +217,18 @@ export async function researchWorkflow(config, params, helpers) {
 					excerpt: clip(page.content, excerptLength(params.outputDepth)),
 					fetchMode: page.fetchMode,
 					fetchStrategy: page.metadata?.strategy,
+					trustSignals: {
+						...buildTrustSignals({
+							url: page.canonicalUrl || candidate.url,
+							sourceCategory: candidate.sourceCategory || classifySourceCategory(candidate),
+							publishedAt: candidate.publishedAt,
+						}),
+						extractionConfidence: page.metadata?.extractionConfidence || inferExtractionConfidence(page.content),
+					},
 					ranking: candidate.ranking,
 				});
-			} catch {
+			} catch (error) {
+				failures.push(normalizeFailure("fetch", error, { url: candidate.url, title: candidate.title }));
 				fetched.push({
 					title: candidate.title,
 					url: candidate.url,
@@ -208,6 +238,11 @@ export async function researchWorkflow(config, params, helpers) {
 					resultType: candidate.resultType,
 					publishedAt: candidate.publishedAt,
 					snippet: candidate.snippet,
+					trustSignals: buildTrustSignals({
+						url: candidate.url,
+						sourceCategory: candidate.sourceCategory || classifySourceCategory(candidate),
+						publishedAt: candidate.publishedAt,
+					}),
 					ranking: candidate.ranking,
 				});
 			}
@@ -225,20 +260,21 @@ export async function researchWorkflow(config, params, helpers) {
 		const agreements = buildAgreements(ranked, keywords, questionPlan.constraintProfile);
 		const disagreements = buildDisagreements(ranked, params.mode, questionPlan.constraintProfile);
 		const confidence = computeConfidence(ranked, questionPlan.constraintProfile);
-
+		const retrySuggestions = buildRetrySuggestions({ failures: [...(search.errors || []), ...failures], ranked, mode: params.mode, constraintProfile: questionPlan.constraintProfile });
 		const recommendation = buildRecommendation({ ...params, question: questionPlan.searchQuery || params.question }, ranked, questionPlan.constraintProfile);
 		const bestPractices = buildBestPractices(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile);
 		const tradeOffs = buildTradeOffs(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile);
 		const risks = buildRisks(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile);
 		const mitigations = buildMitigations(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile);
-		const gaps = buildGaps(ranked, confidence, questionPlan.constraintProfile);
+		const gaps = buildGaps(ranked, confidence, questionPlan.constraintProfile, [...(search.errors || []), ...failures]);
+		const status =
+			search.status === "failure" && ranked.length === 0
+				? "failure"
+				: search.status === "no_results" && ranked.length === 0
+					? "no_results"
+					: ((search.errors?.length || failures.length) ? "partial_success" : "success");
 		return {
-			status:
-				search.status === "failure" && ranked.length === 0
-					? "failure"
-					: search.status === "no_results" && ranked.length === 0
-						? "no_results"
-						: (search.errors?.length ? "partial_success" : "success"),
+			status,
 			answer: buildAnswer({ ...params, question: questionPlan.searchQuery || params.question }, ranked, agreements, disagreements, questionPlan.constraintProfile),
 			recommendation,
 			summary: buildSummary(params, ranked, sourceTypes, sourceCategories, keywords, selection),
@@ -252,6 +288,8 @@ export async function researchWorkflow(config, params, helpers) {
 			sources: ranked,
 			confidence,
 			gaps,
+			failures: [...(search.errors || []), ...failures],
+			retrySuggestions,
 			metadata: {
 				strategy: "web-research-workflow",
 				keywords,
@@ -263,6 +301,7 @@ export async function researchWorkflow(config, params, helpers) {
 				searchErrors: search.errors,
 				selection,
 				queryPlan: questionPlan,
+				partialResult: status === "partial_success",
 			},
 		};
 	});
@@ -274,6 +313,7 @@ export async function researchWorkflow(config, params, helpers) {
 		cacheHit: cache.hit,
 		confidence: value.confidence,
 		status: value.status,
+		failureCount: value.failures?.length || 0,
 		durationMs: Date.now() - startedAt,
 	});
 	return {
@@ -289,7 +329,8 @@ export async function researchWorkflow(config, params, helpers) {
 async function fetchRenderedWorkflow(config, params, helpers, renderedKey) {
 	const { value, cache } = await memo(helpers, "rendered-fetch", renderedKey, config.renderedFetchCacheTtlMs, async () => {
 		const rendered = await fetchRenderedPage(config, params.url);
-		const content = clip(htmlToText(rendered.html), 16000);
+		const structured = config.structuredExtractionEnabled ? extractStructuredContent(rendered.html, { url: params.url, extractionProfile: params.extractionProfile, variant: "rendered" }) : undefined;
+		const content = clip(structured?.content || htmlToText(rendered.html), 16000);
 		return {
 			url: params.url,
 			canonicalUrl: extractCanonicalUrl(rendered.html) ?? params.url,
@@ -299,7 +340,14 @@ async function fetchRenderedWorkflow(config, params, helpers, renderedKey) {
 			fetchMode: "rendered",
 			contentType: "text/html",
 			status: 200,
-			metadata: { strategy: "playwright-fallback", codeAware: buildCodeAwareMetadata(rendered.html, content, params.extractionProfile) },
+			metadata: {
+				strategy: structured ? "playwright-structured-extractor" : "playwright-fallback",
+				extractionConfidence: structured?.diagnostics?.extractionConfidence || inferExtractionConfidence(content),
+				frameworkHints: structured?.frameworkHints || [],
+				fallbackRecommendations: [],
+				codeAware: buildCodeAwareMetadata(rendered.html, content, params.extractionProfile),
+				diagnostics: structured?.diagnostics,
+			},
 		};
 	});
 	return withFetchMetadata(value, { cache, trace: buildTrace(helpers) });
@@ -444,7 +492,7 @@ function buildDisagreements(sources, mode, constraintProfile) {
 	return outputs;
 }
 
-function buildGaps(sources, confidence, constraintProfile) {
+function buildGaps(sources, confidence, constraintProfile, failures = []) {
 	const gaps = [];
 	if (sources.length < 3) gaps.push("Fewer than three strong sources were retrieved.");
 	if (confidence === "low") gaps.push("Evidence diversity is limited; validate important claims manually.");
@@ -453,6 +501,9 @@ function buildGaps(sources, confidence, constraintProfile) {
 	}
 	if (["repo", "release", "migration", "config", "api"].includes(constraintProfile?.queryMode) && (constraintProfile?.exactTerms || []).length > 0 && !sources.some((source) => exactTermsMatchSource(source, constraintProfile.exactTerms))) {
 		gaps.push("No selected source matched the strongest exact technical identifier from the query.");
+	}
+	if ((failures || []).length > 0) {
+		gaps.push(`Some sources could not be searched or fetched automatically (${failures.length} failure${failures.length === 1 ? "" : "s"}).`);
 	}
 	return gaps;
 }
@@ -670,7 +721,7 @@ function selectResearchSources(candidates, maxSources, constraintProfile) {
 		selectionReasons.push({ url: anchor.url, reason: "anchor-source" });
 	}
 	for (const picker of buildCoveragePickers(constraintProfile)) {
-		const match = pool.find((candidate) => !selected.some((item) => item.url === candidate.url) && picker.test(candidate));
+		const match = pool.find((candidate) => !selected.some((item) => comparableUrlKey(item.url) === comparableUrlKey(candidate.url)) && picker.test(candidate));
 		if (match) {
 			selected.push(match);
 			selectionReasons.push({ url: match.url, reason: picker.reason });
@@ -679,7 +730,7 @@ function selectResearchSources(candidates, maxSources, constraintProfile) {
 	}
 	for (const candidate of orderSelectionPool(pool, anchor, constraintProfile)) {
 		if (selected.length >= maxSources) break;
-		if (selected.some((item) => item.url === candidate.url)) continue;
+		if (selected.some((item) => comparableUrlKey(item.url) === comparableUrlKey(candidate.url))) continue;
 		if (selected.some((item) => item.domain && candidate.domain && item.domain === candidate.domain) && !shouldAllowSameDomain(candidate, constraintProfile, anchor)) continue;
 		selected.push(candidate);
 		selectionReasons.push({ url: candidate.url, reason: anchor?.domain && candidate.domain === anchor.domain ? "anchor-domain-support" : "score-fill" });
@@ -833,6 +884,12 @@ function shouldUseBrowserFallback(config, mode, direct) {
 	if (mode === "rendered") return true;
 	if (config.browserMode === "always") return true;
 	if (mode === "fast") return false;
+	const extractionConfidence = direct?.metadata?.extractionConfidence;
+	const shellLikelihood = Number(direct?.metadata?.shellLikelihood || 0);
+	const frameworkHints = direct?.metadata?.frameworkHints || [];
+	if (shellLikelihood >= 0.55) return true;
+	if (extractionConfidence === "low") return true;
+	if (frameworkHints.length > 0 && (!direct.content || direct.content.length < 900)) return true;
 	return !direct.content || direct.content.length < 500;
 }
 
@@ -856,6 +913,53 @@ function withFetchMetadata(result, extra) {
 
 function buildTrace(helpers) {
 	return { requestId: helpers.requestId };
+}
+
+function normalizeFailure(stage, error, context = {}) {
+	const typed = stage === "fetch" ? classifyFetchError(error, context) : error;
+	if (typed?.code && typed?.message) {
+		return {
+			stage,
+			code: typed.code,
+			message: typed.message,
+			retryable: typed.retryable,
+			details: typed.details,
+		};
+	}
+	return {
+		stage,
+		code: "INTERNAL_ERROR",
+		message: error instanceof Error ? error.message : String(error),
+		retryable: true,
+		details: context,
+	};
+}
+
+function buildRetrySuggestions({ failures, ranked, mode, constraintProfile }) {
+	const suggestions = [];
+	if ((failures || []).some((item) => item.retryable)) suggestions.push("Retry the research query with fewer sources to reduce upstream timeout risk.");
+	if ((failures || []).some((item) => item.stage === "fetch")) suggestions.push("Retry in docs-focused mode or rendered mode when important pages look incomplete.");
+	if ((failures || []).length > 0 && (constraintProfile?.preferredDomains || []).length === 0) suggestions.push("Retry with preferred official domains if you already know the primary docs or repo host.");
+	if ((ranked || []).length === 0 && mode === "technical") suggestions.push("Retry with docs-only constraints or explicit official domains to improve technical precision.");
+	return uniqueNonEmpty(suggestions).slice(0, 4);
+}
+
+function inferExtractionConfidence(content) {
+	const length = String(content || "").length;
+	if (length >= 1200) return "high";
+	if (length >= 300) return "medium";
+	return "low";
+}
+
+function buildFetchFallbackRecommendations({ mode, extractionConfidence, shellLikelihood, frameworkHints, strategy }) {
+	const suggestions = [];
+	if (mode !== "rendered" && (shellLikelihood >= 0.55 || extractionConfidence === "low")) {
+		suggestions.push("Rendered mode recommended: the fast fetch looks incomplete or shell-like.");
+	}
+	if ((frameworkHints || []).length > 0 && strategy !== "playwright-fallback") {
+		suggestions.push(`Docs framework detected (${frameworkHints.join(", ")}); rendered or advanced extraction may improve content quality.`);
+	}
+	return suggestions.slice(0, 3);
 }
 
 function buildCodeAwareMetadata(html, content, extractionProfile) {

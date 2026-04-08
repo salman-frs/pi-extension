@@ -12,7 +12,7 @@ Canonical publishable Pi package for the `web-research` extension.
 Recommended:
 
 ```bash
-pi install npm:pi-web-research@0.1.0
+pi install npm:pi-web-research@0.2.1
 ```
 
 Then reload Pi or restart it, and use:
@@ -30,7 +30,7 @@ pi update
 If you pin a version explicitly, install the newer version you want:
 
 ```bash
-pi install npm:pi-web-research@0.1.1
+pi install npm:pi-web-research@0.2.1
 ```
 
 ## Backend config

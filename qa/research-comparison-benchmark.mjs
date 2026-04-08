@@ -1,20 +1,34 @@
+import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+
+const execFileAsync = promisify(execFile);
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(SCRIPT_DIR, "..");
 const REPORT_DIR = resolve(PROJECT_ROOT, "qa", "reports");
 const backendBase = process.env.RESEARCH_COMPARISON_BASE_URL || "http://127.0.0.1:8787";
+const COMPOSE_FILE = resolve(PROJECT_ROOT, "infra", "docker-compose.research.yml");
+const COMPOSE_ENV_FILE = resolve(PROJECT_ROOT, ".env");
 
 async function main() {
-	await ensureHealthyBackend();
-	const providers = buildProviders();
+	let stackStarted = false;
+	try {
+		const health = await tryGetHealth();
+		if (!health?.ok && !process.env.RESEARCH_COMPARISON_BASE_URL) {
+			await compose(["up", "-d", "--quiet-pull"]);
+			stackStarted = true;
+		}
+		await ensureHealthyBackend();
+		const providers = buildProviders();
 	const cases = [
 		{
 			name: "best-practice-react-caching",
 			question: "What are current best practices for React server caching?",
 			mode: "best-practice",
+			preferredDomains: ["react.dev", "nextjs.org", "vercel.com"],
 			evaluate(result) {
 				return scoreChecks([
 					check("answer present", typeof result.answer === "string" && result.answer.length > 40, 3),
@@ -29,6 +43,7 @@ async function main() {
 			name: "exact-config-nextjs",
 			question: "vercel next.js proxyClientMaxBodySize docs",
 			mode: "technical",
+			preferredDomains: ["nextjs.org", "vercel.com"],
 			evaluate(result) {
 				const top = result.sources?.[0];
 				return scoreChecks([
@@ -83,6 +98,11 @@ async function main() {
 	for (const provider of providerResults) {
 		console.log(`- ${provider.provider}: ${provider.enabled ? `${provider.totalScore}/${provider.totalMaxScore}` : `SKIPPED (${provider.skipReason})`}`);
 	}
+	} finally {
+		if (stackStarted) {
+			await compose(["down", "-v"]).catch(() => {});
+		}
+	}
 }
 
 function buildProviders() {
@@ -96,12 +116,19 @@ function buildProviders() {
 				freshness: "year",
 				numberOfSources: 4,
 				outputDepth: "brief",
+				preferredDomains: benchmarkCase.preferredDomains || [],
 			}),
 		},
 		{
 			name: "simple-search-baseline",
 			enabled: true,
 			run: async (benchmarkCase) => runSimpleBaseline(benchmarkCase),
+		},
+		{
+			name: "tavily-baseline",
+			enabled: Boolean(process.env.TAVILY_API_KEY),
+			skipReason: process.env.TAVILY_API_KEY ? undefined : "set TAVILY_API_KEY to enable the Tavily comparison baseline",
+			run: async (benchmarkCase) => runTavilyBaseline(benchmarkCase),
 		},
 		{
 			name: "external-compare-adapter",
@@ -115,12 +142,38 @@ function buildProviders() {
 	];
 }
 
+async function runTavilyBaseline(benchmarkCase) {
+	const response = await postJson(process.env.TAVILY_BASE_URL || "https://api.tavily.com/search", {
+		api_key: process.env.TAVILY_API_KEY,
+		query: benchmarkCase.question,
+		search_depth: process.env.TAVILY_SEARCH_DEPTH || "advanced",
+		max_results: Number(process.env.TAVILY_MAX_RESULTS || 4),
+		include_raw_content: true,
+	});
+	const results = Array.isArray(response?.results) ? response.results : [];
+	const top = results[0];
+	return {
+		answer: top ? `Tavily baseline selected ${top.title || top.url} as the strongest source for ${benchmarkCase.question}.` : `Tavily baseline found no strong source for ${benchmarkCase.question}.`,
+		recommendation: top?.title ? `Start with ${top.title}, then validate the remaining sources.` : undefined,
+		bestPractices: extractBullets([top?.raw_content, top?.content].filter(Boolean).join("\n"), /(should|recommend|best practice|prefer|validate)/i, 2),
+		risks: extractBullets([top?.raw_content, top?.content].filter(Boolean).join("\n"), /(risk|warning|breaking|limitation|caveat)/i, 2),
+		mitigations: extractBullets([top?.raw_content, top?.content].filter(Boolean).join("\n"), /(mitigat|test|verify|rollback|staging|monitor)/i, 2),
+		sources: results.slice(0, 4).map((item) => ({
+			title: item.title,
+			url: item.url,
+			excerpt: item.raw_content || item.content,
+			sourceType: item.source_type,
+		})),
+	};
+}
+
 async function runSimpleBaseline(benchmarkCase) {
 	const search = await postJson(`${backendBase}/v1/search`, {
 		query: benchmarkCase.question,
 		freshness: "year",
 		maxResults: 3,
 		sourceType: benchmarkCase.mode === "best-practice" ? "docs" : "general",
+		preferredDomains: benchmarkCase.preferredDomains || [],
 	});
 	const top = search.results?.[0];
 	let fetched;
@@ -180,10 +233,36 @@ function scoreChecks(checks) {
 }
 
 async function ensureHealthyBackend() {
-	const health = await getJson(`${backendBase}/health`).catch(() => undefined);
+	const health = await waitForHealth();
 	if (!health?.ok) {
 		throw new Error(`Backend is not healthy at ${backendBase}. Start the stack first or set RESEARCH_COMPARISON_BASE_URL.`);
 	}
+}
+
+async function waitForHealth(timeoutMs = 120000) {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const health = await tryGetHealth();
+		if (health?.ok) return health;
+		await sleep(1500);
+	}
+	throw new Error(`Timed out waiting for backend health at ${backendBase}`);
+}
+
+async function tryGetHealth() {
+	try {
+		return await getJson(`${backendBase}/health`);
+	} catch {
+		return undefined;
+	}
+}
+
+async function compose(args) {
+	await execFileAsync("docker", ["compose", "--env-file", COMPOSE_ENV_FILE, "-f", COMPOSE_FILE, ...args], { cwd: PROJECT_ROOT });
+}
+
+function sleep(ms) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function postJson(url, body) {

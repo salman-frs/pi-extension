@@ -106,7 +106,8 @@ async function caseSearchDocs() {
 		check("returns at least 3 results", (result.results || []).length >= 3, 5, `count=${result.results?.length || 0}`),
 		check("top result is official docs or release notes", ["official-docs", "release-notes"].includes(result.results?.[0]?.sourceCategory), 5, result.results?.[0]?.sourceCategory),
 		check("at least 2 preferred-domain results are present", preferredMatches >= 2, 5, `preferredMatches=${preferredMatches}`),
-		check("ranking reasons are visible", Array.isArray(result.results?.[0]?.ranking?.reasons) && result.results[0].ranking.reasons.length > 0, 5, JSON.stringify(result.results?.[0]?.ranking || {})),
+		check("ranking reasons are visible", Array.isArray(result.results?.[0]?.ranking?.reasons) && result.results[0].ranking.reasons.length > 0, 3, JSON.stringify(result.results?.[0]?.ranking || {})),
+		check("trust signals are exposed", typeof result.results?.[0]?.trustSignals?.authority === "string", 2, JSON.stringify(result.results?.[0]?.trustSignals || {})),
 	], {
 		sample: result.results?.slice(0, 3),
 	});
@@ -194,8 +195,9 @@ async function caseFetchDocsMarkdownPreferred() {
 	});
 	return makeCase("live-fetch-docs-markdown-preferred", 15, [
 		check("uses markdown-aware fetch strategy", result.metadata?.strategy === "docs-markdown-fetch", 5, JSON.stringify(result.metadata || {})),
-		check("content contains docs-specific text", /Build Agents on Cloudflare|createMcpHandler|stateless MCP server/i.test(result.content || ""), 5, result.content?.slice(0, 400)),
-		check("content is not raw html", !/^<!doctype html>/i.test(result.content || ""), 5, result.content?.slice(0, 120)),
+		check("content contains docs-specific text", /Build Agents on Cloudflare|createMcpHandler|stateless MCP server/i.test(result.content || ""), 4, result.content?.slice(0, 400)),
+		check("content is not raw html", !/^<!doctype html>/i.test(result.content || ""), 3, result.content?.slice(0, 120)),
+		check("extraction confidence is exposed", typeof result.metadata?.extractionConfidence === "string", 3, JSON.stringify(result.metadata || {})),
 	], {
 		sample: { title: result.title, strategy: result.metadata?.strategy, contentType: result.contentType },
 	});

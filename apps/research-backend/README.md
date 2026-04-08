@@ -23,11 +23,14 @@ Key behavior:
 - inspectable ranking reasons
 - exact config / API / migration / repo / release selection
 - GitHub entity resolution for repo and release intent
-- docs-aware markdown / LLM-text fetch preference for supported docs domains
-- typed error payloads and partial-success responses
+- broader docs-aware markdown / LLM-text fetch preference plus heuristic docs-surface discovery
+- structured HTML extraction for modern docs/framework-style pages
+- typed error payloads, partial-success responses, and retry suggestions
+- trust signals such as authority / freshness / extraction confidence
 - caching and telemetry hooks
 - stable output contracts for Pi and future extension consumers
 - research outputs with recommendation / best-practice / trade-off / risk / mitigation sections
+- source-comparison outputs with stronger decision-support fields
 
 ## Local start
 
@@ -83,6 +86,7 @@ pi -e extensions/web-research/src/index.ts
 - `PLAYWRIGHT_ENABLED` — enable browser fallback
 - `PLAYWRIGHT_HEADLESS` — browser headless mode
 - `BROWSER_MODE` — `auto` or `always`
+- `STRUCTURED_EXTRACTION_ENABLED` — enable structured HTML extraction heuristics
 - `ALLOW_PRIVATE_FETCH_HOSTS` — local/private host allowlist for controlled QA/dev only
 - `CACHE_ENABLED` — enable in-memory caching
 - `SEARCH_CACHE_TTL_MS`
@@ -133,7 +137,7 @@ See:
 - `apps/research-backend/API.md`
 - `apps/research-backend/OUTPUT_SCHEMA.md`
 
-These documents describe the stable Phase 1 response shapes intended for Pi and downstream extension consumers.
+These documents describe the stable Phase 1+ additive response shapes intended for Pi and downstream extension consumers.
 
 ## Delivery notes
 

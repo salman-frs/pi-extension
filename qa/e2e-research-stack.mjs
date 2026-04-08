@@ -242,6 +242,7 @@ async function main() {
 		assert(search.results[0].title.includes("React"), "top search result should mention React");
 		assert(typeof search.results[0].sourceCategory === "string", "search should classify source categories");
 		assert(Array.isArray(search.results[0].ranking?.reasons), "search should expose ranking reasons");
+		assert(typeof search.results[0].trustSignals?.authority === "string", "search should expose trust signals");
 
 		const fetched = await postJson(`${backendBase}/v1/fetch`, {
 			url: `${contentBase}/official-react-caching`,
@@ -251,6 +252,7 @@ async function main() {
 		assert(fetched.title === "Official React caching guidance", "fetch should extract title");
 		assert(String(fetched.content).includes("cache invalidation"), "fetch should extract cleaned content");
 		assert(typeof fetched.metadata?.requestId === "string", "fetch should expose request id metadata");
+		assert(typeof fetched.metadata?.extractionConfidence === "string", "fetch should expose extraction confidence");
 
 		const research = await postJson(`${backendBase}/v1/research`, {
 			question: "What are current best practices for React server caching?",
@@ -267,6 +269,7 @@ async function main() {
 		assert(Array.isArray(research.sources) && research.sources.length >= 2, "research should produce sources");
 		assert(typeof research.sources[0].sourceCategory === "string", "research sources should expose categories");
 		assert(typeof research.confidence === "string", "research should produce confidence");
+		assert(Array.isArray(research.retrySuggestions) || Array.isArray(research.failures) || research.status === "success", "research should expose retry/failure info when partial");
 
 		const analyze = await postJson(`${backendBase}/v1/analyze`, {
 			question: "Compare these caching recommendations",
@@ -280,6 +283,7 @@ async function main() {
 		assert(Array.isArray(analyze.agreements), "analyze should produce agreements array");
 		assert(Array.isArray(analyze.sources) && analyze.sources.length === 2, "analyze should preserve both sources");
 		assert(typeof analyze.sources[0].sourceCategory === "string", "analyze should classify source categories");
+		assert(typeof analyze.recommendation === "string" || typeof analyze.officialPosition === "string", "analyze should produce decision-support fields");
 
 		const invalidate = await postJson(`${backendBase}/v1/cache/invalidate`, { namespace: "research" });
 		assert(invalidate.ok === true, "cache invalidation endpoint should work");

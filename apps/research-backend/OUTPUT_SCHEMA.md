@@ -44,6 +44,7 @@ Stable result fields:
 - `domain`
 - `publishedAt`
 - `score`
+- `trustSignals`
 - `ranking`
 
 Intended use:
@@ -67,6 +68,8 @@ Top-level shape:
 Stable fields of interest:
 - `metadata.strategy`
 - `metadata.codeAware`
+- `metadata.extractionConfidence`
+- `metadata.fallbackRecommendations`
 - `metadata.consumerHints`
 
 Intended use:
@@ -91,6 +94,8 @@ Top-level shape:
 - `sources[]`
 - `confidence`
 - `gaps[]`
+- `failures[]`
+- `retrySuggestions[]`
 - `metadata`
 
 Important metadata:
@@ -98,6 +103,7 @@ Important metadata:
 - `metadata.selection`
 - `metadata.queryPlan`
 - `metadata.searchDiagnostics`
+- `metadata.partialResult`
 - `metadata.consumerHints`
 
 Intended use:
@@ -112,6 +118,10 @@ Top-level shape:
 - `agreements[]`
 - `disagreements[]`
 - `strongestEvidence[]`
+- `officialPosition`
+- `communityPosition`
+- `recommendation`
+- `uncertainties[]`
 - `gaps[]`
 - `sources[]`
 - `metadata`

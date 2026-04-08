@@ -58,7 +58,7 @@ pi -e extensions/web-research/src/index.ts
 Or install the publishable Pi package:
 
 ```bash
-pi install npm:pi-web-research@0.1.0
+pi install npm:pi-web-research@0.2.1
 ```
 
 ## Runtime modes

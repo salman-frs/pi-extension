@@ -62,6 +62,7 @@ interface SearchResult {
 	domain?: string;
 	publishedAt?: string;
 	score?: number;
+	trustSignals?: Record<string, unknown>;
 	ranking?: Record<string, unknown>;
 }
 
@@ -88,10 +89,12 @@ interface ResearchSource {
 	publishedAt?: string;
 	confidence?: string;
 	score?: number;
+	trustSignals?: Record<string, unknown>;
 	ranking?: Record<string, unknown>;
 }
 
 interface ResearchOutput {
+	status?: string;
 	answer?: string;
 	recommendation?: string;
 	summary?: string;
@@ -105,6 +108,8 @@ interface ResearchOutput {
 	sources?: ResearchSource[];
 	confidence?: string;
 	gaps?: string[];
+	failures?: Array<Record<string, unknown>>;
+	retrySuggestions?: string[];
 	metadata?: Record<string, unknown>;
 }
 
@@ -113,6 +118,10 @@ interface AnalyzeOutput {
 	agreements?: string[];
 	disagreements?: string[];
 	strongestEvidence?: string[];
+	officialPosition?: string;
+	communityPosition?: string;
+	recommendation?: string;
+	uncertainties?: string[];
 	gaps?: string[];
 	sources?: ResearchSource[];
 	metadata?: Record<string, unknown>;
@@ -831,6 +840,7 @@ function normalizeSearchResults(raw: any): SearchResult[] {
 			domain: stringify(item.domain) ?? hostnameFromUrl(stringify(item.url) ?? stringify(item.link) ?? ""),
 			publishedAt: stringify(item.publishedAt) ?? stringify(item.publishedDate) ?? stringify(item.date),
 			score: numberOrUndefined(item.score),
+			trustSignals: isRecord(item.trustSignals) ? item.trustSignals : undefined,
 			ranking: isRecord(item.ranking) ? item.ranking : undefined,
 		}))
 		.filter((item: SearchResult) => Boolean(item.url));
@@ -1093,6 +1103,7 @@ async function performResearchQuery(
 
 function normalizeResearchOutput(raw: any): ResearchOutput {
 	return {
+		status: stringify(raw?.status),
 		answer: stringify(raw?.answer),
 		recommendation: stringify(raw?.recommendation),
 		summary: stringify(raw?.summary),
@@ -1106,6 +1117,8 @@ function normalizeResearchOutput(raw: any): ResearchOutput {
 		sources: normalizeResearchSources(raw?.sources ?? raw?.citations),
 		confidence: stringify(raw?.confidence),
 		gaps: arrayOfStrings(raw?.gaps),
+		failures: Array.isArray(raw?.failures) ? raw.failures.filter((item: unknown) => isRecord(item)) as Array<Record<string, unknown>> : undefined,
+		retrySuggestions: arrayOfStrings(raw?.retrySuggestions),
 		metadata: isRecord(raw?.metadata) ? raw.metadata : undefined,
 	};
 }
@@ -1123,6 +1136,7 @@ function normalizeResearchSources(value: unknown): ResearchSource[] {
 		publishedAt: stringify(item?.publishedAt) ?? stringify(item?.date),
 		confidence: stringify(item?.confidence),
 		score: numberOrUndefined(item?.score),
+		trustSignals: isRecord(item?.trustSignals) ? item.trustSignals : undefined,
 		ranking: isRecord(item?.ranking) ? item.ranking : undefined,
 	})).filter((item) => Boolean(item.url || item.excerpt || item.title));
 }
@@ -1242,6 +1256,10 @@ function normalizeAnalyzeOutput(raw: any): AnalyzeOutput {
 		agreements: arrayOfStrings(raw?.agreements),
 		disagreements: arrayOfStrings(raw?.disagreements),
 		strongestEvidence: arrayOfStrings(raw?.strongestEvidence) ?? arrayOfStrings(raw?.strongest_evidence),
+		officialPosition: stringify(raw?.officialPosition),
+		communityPosition: stringify(raw?.communityPosition),
+		recommendation: stringify(raw?.recommendation),
+		uncertainties: arrayOfStrings(raw?.uncertainties),
 		gaps: arrayOfStrings(raw?.gaps),
 		sources: normalizeResearchSources(raw?.sources ?? raw?.citations),
 		metadata: isRecord(raw?.metadata) ? raw.metadata : undefined,
@@ -1261,6 +1279,8 @@ function renderSearchResults(query: string, results: SearchResult[]): string {
 		if (result.sourceCategory) lines.push(`   Category: ${result.sourceCategory}`);
 		if (result.resultType) lines.push(`   Result type: ${result.resultType}`);
 		if (typeof result.score === "number") lines.push(`   Score: ${result.score}`);
+		const trustSummary = summarizeTrustSignals(result.trustSignals);
+		if (trustSummary) lines.push(`   Trust: ${trustSummary}`);
 		if (result.publishedAt) lines.push(`   Published: ${result.publishedAt}`);
 		if (result.snippet) lines.push(`   Snippet: ${result.snippet}`);
 		lines.push("");
@@ -1273,6 +1293,7 @@ function renderFetchResult(result: FetchResult): string {
 	const headings = Array.isArray(codeAware?.headings) ? codeAware.headings as string[] : [];
 	const codeSnippets = Array.isArray(codeAware?.codeSnippets) ? codeAware.codeSnippets as string[] : [];
 	const callouts = Array.isArray(codeAware?.callouts) ? codeAware.callouts as string[] : [];
+	const fallbackRecommendations = Array.isArray(result.metadata?.fallbackRecommendations) ? result.metadata?.fallbackRecommendations as string[] : [];
 	const lines = [
 		`Fetched URL: ${result.url}`,
 		result.canonicalUrl ? `Canonical URL: ${result.canonicalUrl}` : undefined,
@@ -1280,8 +1301,11 @@ function renderFetchResult(result: FetchResult): string {
 		result.contentType ? `Content-Type: ${result.contentType}` : undefined,
 		result.fetchMode ? `Fetch mode: ${result.fetchMode}` : undefined,
 		result.extractionProfile ? `Extraction profile: ${result.extractionProfile}` : undefined,
+		typeof result.metadata?.strategy === "string" ? `Strategy: ${String(result.metadata?.strategy)}` : undefined,
+		typeof result.metadata?.extractionConfidence === "string" ? `Extraction confidence: ${String(result.metadata?.extractionConfidence)}` : undefined,
 		headings.length ? `Headings: ${headings.join(" | ")}` : undefined,
 		callouts.length ? `Important notes: ${callouts.join(" | ")}` : undefined,
+		fallbackRecommendations.length ? `Fallback guidance: ${fallbackRecommendations.join(" | ")}` : undefined,
 		codeSnippets.length ? `Code snippets:\n${codeSnippets.map((item, index) => `${index + 1}. ${item}`).join("\n")}` : undefined,
 		"",
 		result.content || "",
@@ -1291,6 +1315,10 @@ function renderFetchResult(result: FetchResult): string {
 
 function renderResearchOutput(question: string, result: ResearchOutput): string {
 	const lines: string[] = [`Research query: ${question}`, ""];
+	if (result.status) {
+		lines.push(`Status: ${result.status}`);
+		lines.push("");
+	}
 	if (result.answer) {
 		lines.push("Answer:");
 		lines.push(result.answer);
@@ -1341,6 +1369,16 @@ function renderResearchOutput(question: string, result: ResearchOutput): string 
 		for (const item of result.disagreements) lines.push(`- ${item}`);
 		lines.push("");
 	}
+	if (result.failures?.length) {
+		lines.push("Failures:");
+		for (const failure of result.failures) lines.push(`- ${String(failure.stage ?? "unknown")}: ${String(failure.message ?? failure.code ?? "failure")}`);
+		lines.push("");
+	}
+	if (result.retrySuggestions?.length) {
+		lines.push("Retry suggestions:");
+		for (const item of result.retrySuggestions) lines.push(`- ${item}`);
+		lines.push("");
+	}
 	if (result.sources?.length) {
 		lines.push("Citation candidates:");
 		for (const source of result.sources.slice(0, 5)) {
@@ -1355,6 +1393,8 @@ function renderResearchOutput(question: string, result: ResearchOutput): string 
 			if (source.sourceCategory) lines.push(`   Category: ${source.sourceCategory}`);
 			if (source.resultType) lines.push(`   Result type: ${source.resultType}`);
 			if (typeof source.score === "number") lines.push(`   Score: ${source.score}`);
+			const trustSummary = summarizeTrustSignals(source.trustSignals);
+			if (trustSummary) lines.push(`   Trust: ${trustSummary}`);
 			if (source.publishedAt) lines.push(`   Published: ${source.publishedAt}`);
 			if (source.snippet) lines.push(`   Snippet: ${source.snippet}`);
 			if (source.excerpt) lines.push(`   Excerpt: ${source.excerpt}`);
@@ -1394,6 +1434,26 @@ function renderAnalyzeOutput(question: string, comparisonMode: string, result: A
 		for (const item of result.strongestEvidence) lines.push(`- ${item}`);
 		lines.push("");
 	}
+	if (result.officialPosition) {
+		lines.push("Official position:");
+		lines.push(result.officialPosition);
+		lines.push("");
+	}
+	if (result.communityPosition) {
+		lines.push("Community position:");
+		lines.push(result.communityPosition);
+		lines.push("");
+	}
+	if (result.recommendation) {
+		lines.push("Recommendation:");
+		lines.push(result.recommendation);
+		lines.push("");
+	}
+	if (result.uncertainties?.length) {
+		lines.push("Uncertainties:");
+		for (const item of result.uncertainties) lines.push(`- ${item}`);
+		lines.push("");
+	}
 	if (result.sources?.length) {
 		lines.push("Citation candidates:");
 		for (const source of result.sources.slice(0, 5)) {
@@ -1408,6 +1468,8 @@ function renderAnalyzeOutput(question: string, comparisonMode: string, result: A
 			if (source.sourceCategory) lines.push(`   Category: ${source.sourceCategory}`);
 			if (source.resultType) lines.push(`   Result type: ${source.resultType}`);
 			if (typeof source.score === "number") lines.push(`   Score: ${source.score}`);
+			const trustSummary = summarizeTrustSignals(source.trustSignals);
+			if (trustSummary) lines.push(`   Trust: ${trustSummary}`);
 			if (source.excerpt) lines.push(`   Excerpt: ${source.excerpt}`);
 		});
 		lines.push("");
@@ -1417,6 +1479,19 @@ function renderAnalyzeOutput(question: string, comparisonMode: string, result: A
 		for (const gap of result.gaps) lines.push(`- ${gap}`);
 	}
 	return lines.join("\n").trim();
+}
+
+function summarizeTrustSignals(trustSignals: Record<string, unknown> | undefined): string | undefined {
+	if (!trustSignals) return undefined;
+	const parts = [
+		typeof trustSignals.authority === "string" ? `authority=${String(trustSignals.authority)}` : undefined,
+		trustSignals.official === true ? "official" : trustSignals.community === true ? "community" : undefined,
+		typeof trustSignals.freshness === "string" ? `freshness=${String(trustSignals.freshness)}` : undefined,
+		typeof trustSignals.extractionConfidence === "string" ? `extraction=${String(trustSignals.extractionConfidence)}` : undefined,
+		trustSignals.likelyOutdated === true ? "likely-outdated" : undefined,
+		typeof trustSignals.versionHint === "string" ? `version=${String(trustSignals.versionHint)}` : undefined,
+	].filter(Boolean);
+	return parts.length > 0 ? parts.join(", ") : undefined;
 }
 
 async function finalizeTextOutput(prefix: string, text: string): Promise<{ text: string; details?: { truncated?: boolean; fullOutputPath?: string } }> {

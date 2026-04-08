@@ -1,5 +1,5 @@
-import { domainMatches, hostnameFromUrl, normalizeDomain, unique } from "./lib/utils.js";
-import { authorityWeight, canonicalHintScore, classifyResultType, classifySourceCategory, inferSourceType, isAuthoritativeCategory, resultTypeWeight } from "./source-quality.js";
+import { comparableUrlKey, domainMatches, hostnameFromUrl, normalizeDomain, unique } from "./lib/utils.js";
+import { authorityWeight, buildTrustSignals, canonicalHintScore, classifyResultType, classifySourceCategory, inferSourceType, isAuthoritativeCategory, resultTypeWeight } from "./source-quality.js";
 
 const HIGH_TRUST_SUFFIXES = [
 	"gov",
@@ -40,9 +40,9 @@ export function rankSearchResults(results, params) {
 		constraintProfile,
 	}));
 
-	return filtered
-		.sort((a, b) => (b.score || 0) - (a.score || 0))
-		.filter((item, index, arr) => arr.findIndex((other) => other.url === item.url) === index);
+	return enforcePreferredDomainPrecision(filtered
+		.sort((a, b) => (b.score || 0) - (a.score || 0)), contextFromParams(params))
+		.filter((item, index, arr) => arr.findIndex((other) => resultIdentity(other) === resultIdentity(item)) === index);
 }
 
 export function rankFetchedSources(sources, question, preferredDomains = [], constraintProfile) {
@@ -56,7 +56,8 @@ export function rankFetchedSources(sources, question, preferredDomains = [], con
 			sourceTypePreference: undefined,
 			constraintProfile,
 		}))
-		.sort((a, b) => (b.score || 0) - (a.score || 0));
+		.sort((a, b) => (b.score || 0) - (a.score || 0))
+		.filter((item, index, arr) => arr.findIndex((other) => resultIdentity(other) === resultIdentity(item)) === index);
 }
 
 export function summarizeSourceTypes(sources) {
@@ -96,15 +97,20 @@ function scoreResult(result, context) {
 		contributions.push([-30, "explicit-site-miss"]);
 	}
 	if (preferredMatch) {
-		contributions.push([40, "preferred-domain"]);
+		contributions.push([context.sourceTypePreference === "docs" ? 52 : 40, "preferred-domain"]);
 	} else if (context.preferredDomains.length > 0) {
-		contributions.push([context.constraintProfile?.strictPreferredDomains ? -18 : -8, "non-preferred-domain-penalty"]);
+		const penalty = context.constraintProfile?.strictPreferredDomains
+			? -28
+			: context.sourceTypePreference === "docs" || context.constraintProfile?.requiresOfficialSource
+				? -18
+				: -8;
+		contributions.push([penalty, "non-preferred-domain-penalty"]);
 	}
 	if (isHighTrust(domain)) contributions.push([12, "high-trust-domain"]);
 	if (sourceType === context.sourceTypePreference && context.sourceTypePreference && context.sourceTypePreference !== "general") {
 		contributions.push([8, `source-type:${sourceType}`]);
 	}
-	if (sourceType === "docs") contributions.push([10, "docs-source"]);
+	if (sourceType === "docs") contributions.push([context.sourceTypePreference === "docs" ? 16 : 10, "docs-source"]);
 	if (sourceType === "github") contributions.push([context.sourceTypePreference === "github" || ["repo", "release", "novel-discovery"].includes(queryMode) ? 6 : -8, "github-source"]);
 	if (looksLikeRepoBlob(result)) contributions.push([context.sourceTypePreference === "github" ? 0 : -10, "github-blob-penalty"]);
 
@@ -129,7 +135,7 @@ function scoreResult(result, context) {
 	const relevance = relevanceScore(result, context.queryTokens);
 	if (relevance) contributions.push([relevance, "query-relevance"]);
 	if ((result.excerpt || "").length > 200) contributions.push([5, "rich-excerpt"]);
-	if (isAuthoritativeCategory(sourceCategory) && context.sourceTypePreference === "docs") contributions.push([4, "authoritative-for-docs-query"]);
+	if (isAuthoritativeCategory(sourceCategory) && context.sourceTypePreference === "docs") contributions.push([10, "authoritative-for-docs-query"]);
 	if (context.sourceTypePreference === "news" && ["wire-service", "mainstream-media", "major-media", "survey-organization", "official-government"].includes(sourceCategory)) {
 		contributions.push([6, "authoritative-for-news-query"]);
 	}
@@ -143,6 +149,10 @@ function scoreResult(result, context) {
 		sourceCategory,
 		resultType,
 		score,
+		trustSignals: {
+			...buildTrustSignals({ ...result, domain, sourceType, sourceCategory }),
+			extractionConfidence: result.trustSignals?.extractionConfidence,
+		},
 		ranking: {
 			reasons: contributions.filter(([value]) => value !== 0).map(([value, reason]) => `${reason}:${value > 0 ? "+" : ""}${value}`),
 			contributions: Object.fromEntries(contributions.map(([value, reason]) => [reason, value])),
@@ -288,6 +298,31 @@ function applyConstraintFidelity(contributions, result, constraintProfile, query
 		const matched = (constraintProfile.exactTerms || []).some((term) => compact(haystack).includes(compact(term)));
 		contributions.push([matched ? 8 : -10, "constraint-exact-term"]);
 	}
+}
+
+function resultIdentity(item) {
+	return comparableUrlKey(item?.url) || [compact(item?.title), compact(item?.snippet), compact(item?.excerpt)].filter(Boolean).join("|");
+}
+
+function contextFromParams(params) {
+	return {
+		sourceTypePreference: params.sourceType,
+		preferredDomains: params.preferredDomains || [],
+		constraintProfile: params.constraintProfile,
+	};
+}
+
+function enforcePreferredDomainPrecision(results, context) {
+	if (!Array.isArray(results) || results.length === 0) return [];
+	if (!context?.preferredDomains?.length) return results;
+	const hasDocsConstraint = context.sourceTypePreference === "docs" || context.constraintProfile?.requiresOfficialSource;
+	if (!hasDocsConstraint) return results;
+	const preferred = results.filter((item) => context.preferredDomains.some((domain) => domainMatches(item.domain, domain)));
+	if (preferred.length >= Math.min(3, results.length)) {
+		const nonPreferred = results.filter((item) => !context.preferredDomains.some((domain) => domainMatches(item.domain, domain)));
+		return [...preferred, ...nonPreferred];
+	}
+	return results;
 }
 
 function freshnessScore(value, freshness) {

@@ -14,6 +14,19 @@ Its job is to compare the default `web-research` stack against simpler or extern
 Current built-in providers:
 - `default-web-research`
 - `simple-search-baseline`
+- `tavily-baseline` (optional, enabled with `TAVILY_API_KEY`)
+
+## Optional Tavily baseline
+
+You can enable a real hosted search baseline with:
+
+```bash
+export TAVILY_API_KEY=...
+# optional:
+export TAVILY_BASE_URL=https://api.tavily.com/search
+export TAVILY_SEARCH_DEPTH=advanced
+export TAVILY_MAX_RESULTS=4
+```
 
 ## External comparison scaffold
 

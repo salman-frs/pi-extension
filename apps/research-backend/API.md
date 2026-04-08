@@ -51,6 +51,13 @@ Response:
       "resultType": "configuration-reference",
       "publishedAt": "...",
       "score": 42,
+      "trustSignals": {
+        "authority": "high",
+        "authorityScore": 82,
+        "official": true,
+        "freshness": "recent",
+        "likelyOutdated": false
+      },
       "ranking": {
         "reasons": ["category:official-docs:+16", "result-type:configuration-reference:+22"],
         "contributions": {
@@ -108,6 +115,8 @@ Response:
     "strategy": "docs-markdown-fetch",
     "sourceVariant": "docs-markdown",
     "resolvedUrl": "https://developers.cloudflare.com/agents/llms-full.txt",
+    "extractionConfidence": "high",
+    "fallbackRecommendations": [],
     "codeAware": {
       "headings": ["..."],
       "codeSnippets": ["..."],
@@ -169,6 +178,12 @@ Response:
       "snippet": "...",
       "excerpt": "...",
       "score": 17,
+      "trustSignals": {
+        "authority": "high",
+        "official": true,
+        "freshness": "recent",
+        "extractionConfidence": "high"
+      },
       "ranking": {
         "reasons": ["docs-source:+10"]
       }
@@ -176,6 +191,17 @@ Response:
   ],
   "confidence": "medium",
   "gaps": ["..."],
+  "failures": [
+    {
+      "stage": "fetch",
+      "code": "FETCH_TIMEOUT",
+      "message": "Fetch timed out for URL: ...",
+      "retryable": true
+    }
+  ],
+  "retrySuggestions": [
+    "Retry the research query with fewer sources to reduce upstream timeout risk."
+  ],
   "metadata": {
     "contract": "pi.web-research.research.v1",
     "schemaVersion": "2026-04-08.v1",
@@ -253,6 +279,10 @@ Response:
   "agreements": ["..."],
   "disagreements": ["..."],
   "strongestEvidence": ["..."],
+  "officialPosition": "...",
+  "communityPosition": "...",
+  "recommendation": "...",
+  "uncertainties": ["..."],
   "gaps": ["..."],
   "sources": [],
   "metadata": {
@@ -274,7 +304,7 @@ Response:
 
 ## Stable output contract
 
-See `apps/research-backend/OUTPUT_SCHEMA.md` for the stable Phase 1 contract intended for Pi and downstream extension consumers.
+See `apps/research-backend/OUTPUT_SCHEMA.md` for the stable Phase 1+ additive contract intended for Pi and downstream extension consumers.
 
 ## Cache invalidation
 

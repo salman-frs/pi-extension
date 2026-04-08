@@ -87,7 +87,7 @@ pi -e extensions/web-research/src/index.ts
 Or install the publishable Pi package:
 
 ```bash
-pi install npm:pi-web-research@0.1.0
+pi install npm:pi-web-research@0.2.1
 ```
 
 Then inside Pi:
@@ -161,7 +161,7 @@ For GitHub + npm delivery, the repo includes a publishable Pi package:
 Recommended end-user install path:
 
 ```bash
-pi install npm:pi-web-research@0.1.0
+pi install npm:pi-web-research@0.2.1
 ```
 
 Update path:
@@ -177,4 +177,5 @@ The stack is strongest today at:
 - exact config and API retrieval
 - GitHub issue / discussion / repo / release lookup
 - migration / release-note research
-- grounded fetch of modern docs, including markdown/LLM-text preference for supported domains
+- grounded fetch of modern docs, including markdown/LLM-text preference and structured extraction for modern docs frameworks
+- research outputs with partial-result recovery, retry suggestions, and stronger trust signals

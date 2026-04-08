@@ -51,6 +51,43 @@ export function unique(values) {
 	return [...new Set(values.filter(Boolean))];
 }
 
+export function normalizeComparableUrl(url) {
+	if (!url) return undefined;
+	try {
+		const parsed = new URL(url);
+		parsed.hash = "";
+		parsed.search = "";
+		let path = parsed.pathname || "/";
+		path = path
+			.replace(/\/index\.(md|html?)$/i, "/")
+			.replace(/\/(llms-full|llms)\.txt$/i, "/")
+			.replace(/\.md$/i, "")
+			.replace(/\/(v\d+(?:\.\d+)*)\//i, "/")
+			.replace(/\/+/g, "/");
+		if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
+		parsed.pathname = path || "/";
+		return parsed.toString().replace(/\/$/, "");
+	} catch {
+		return undefined;
+	}
+}
+
+export function comparableUrlKey(url) {
+	return normalizeComparableUrl(url) || trim(url) || "";
+}
+
+export function versionHintFromUrl(url) {
+	const value = String(url || "");
+	const match = value.match(/\/(v\d+(?:\.\d+)*)\//i);
+	return match?.[1]?.toLowerCase();
+}
+
+export function ageInDays(value) {
+	const ts = Date.parse(String(value || ""));
+	if (!Number.isFinite(ts)) return undefined;
+	return Math.max(0, Math.round((Date.now() - ts) / 86_400_000));
+}
+
 export function nowIso() {
 	return new Date().toISOString();
 }

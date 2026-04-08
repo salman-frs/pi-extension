@@ -273,7 +273,7 @@ async function main() {
 		cases.push(await runPromptCase(
 			client,
 			"research_query",
-			"Use the research_query tool exactly once in best-practice mode for React server caching best practices. Return exactly one bullet and one citation URL.",
+			"You must use only the research_query tool exactly once in best-practice mode for React server caching best practices. Do not use search_web or fetch_url. Return exactly one bullet and one citation URL.",
 			"research_query",
 			(finalText) => {
 				assert(/- /.test(finalText), `research_query: expected a bullet ${finalText}`);

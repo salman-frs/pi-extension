@@ -2,7 +2,7 @@ import { stableCacheKey } from "../lib/cache.js";
 import { bestSentences, topKeywords } from "../lib/text.js";
 import { clip, hostnameFromUrl, unique } from "../lib/utils.js";
 import { rankFetchedSources, summarizeSourceCategories } from "../ranking.js";
-import { classifySourceCategory, inferSourceType, isAuthoritativeCategory } from "../source-quality.js";
+import { buildTrustSignals, classifySourceCategory, inferSourceType, isAuthoritativeCategory } from "../source-quality.js";
 import { fetchWorkflow } from "./research.js";
 
 export async function analyzeWorkflow(config, params, helpers) {
@@ -62,6 +62,10 @@ export async function analyzeWorkflow(config, params, helpers) {
 			agreements,
 			disagreements,
 			strongestEvidence,
+			officialPosition: buildOfficialPosition(ranked, params.question),
+			communityPosition: buildCommunityPosition(ranked, params.question),
+			recommendation: buildRecommendation(ranked, params.comparisonMode),
+			uncertainties: buildUncertainties(ranked, disagreements, params.comparisonMode),
 			gaps,
 			sources: ranked,
 			metadata: {
@@ -99,6 +103,7 @@ function normalizeSource(source) {
 		domain: hostnameFromUrl(source.url),
 		sourceType,
 		sourceCategory,
+		trustSignals: buildTrustSignals({ ...source, sourceType, sourceCategory }),
 	};
 }
 
@@ -134,6 +139,41 @@ function buildAgreements(keywords, ranked, comparisonMode) {
 		const official = ranked.filter((source) => ["official-docs", "release-notes", "vendor-blog"].includes(source.sourceCategory));
 		const community = ranked.filter((source) => ["secondary-tech-blog", "forum-community", "github-discussion", "github-issue"].includes(source.sourceCategory));
 		if (official.length > 0 && community.length > 0) outputs.push(`Both official/vendor and community-oriented sources are present for direct comparison.`);
+	}
+	return outputs;
+}
+
+function buildOfficialPosition(ranked, question) {
+	const official = ranked.filter((source) => ["official-docs", "release-notes", "vendor-blog", "github-repo"].includes(source.sourceCategory));
+	if (official.length === 0) return undefined;
+	const top = official[0];
+	const sentence = bestSentences(top.excerpt || top.title || "", question, 1)[0];
+	return sentence ? `${top.title || top.url}: ${sentence}` : `${top.title || top.url} is the strongest official/vendor source in this comparison.`;
+}
+
+function buildCommunityPosition(ranked, question) {
+	const community = ranked.filter((source) => ["forum-community", "secondary-tech-blog", "github-issue", "github-discussion"].includes(source.sourceCategory));
+	if (community.length === 0) return undefined;
+	const top = community[0];
+	const sentence = bestSentences(top.excerpt || top.title || "", question, 1)[0];
+	return sentence ? `${top.title || top.url}: ${sentence}` : `${top.title || top.url} is the strongest community-oriented source in this comparison.`;
+}
+
+function buildRecommendation(ranked, comparisonMode) {
+	if (ranked.length === 0) return undefined;
+	const top = ranked[0];
+	if (comparisonMode === "official-vs-community") {
+		return `Prefer ${top.title || top.url} as the anchor, then use the strongest community source to validate edge cases and implementation caveats.`;
+	}
+	return `Start from ${top.title || top.url} as the strongest evidence source, then validate any conflicting details against the remaining sources.`;
+}
+
+function buildUncertainties(ranked, disagreements, comparisonMode) {
+	const outputs = [];
+	if (ranked.length < 2) outputs.push("Only a small source set was available for comparison.");
+	if ((disagreements || []).length === 0) outputs.push("No strong disagreement was automatically detected, but manual review may still surface nuance.");
+	if (comparisonMode === "official-vs-community" && !ranked.some((source) => ["forum-community", "secondary-tech-blog", "github-issue", "github-discussion"].includes(source.sourceCategory))) {
+		outputs.push("Community-oriented evidence is limited, so community edge cases may be underrepresented.");
 	}
 	return outputs;
 }

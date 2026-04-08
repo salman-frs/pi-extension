@@ -206,6 +206,53 @@ const pageFixtures = {
 		</article>
 		`,
 	},
+	"/mintlify/guide": {
+		title: "Acme Runtime Guide",
+		canonicalUrl: `${contentBase}/mintlify/guide`,
+		body: `
+		<div id="__mintlify-root">
+			<nav>Docs nav</nav>
+			<main>
+				<h1>Acme Runtime Guide</h1>
+				<p>Loading shell that should be replaced by markdown-aware docs candidates when available.</p>
+			</main>
+		</div>
+		`,
+	},
+	"/mintlify/guide/llms-full.txt": {
+		title: "Acme Runtime Guide",
+		canonicalUrl: `${contentBase}/mintlify/guide`,
+		contentType: "text/markdown; charset=utf-8",
+		rawBody: `# Acme Runtime Guide\n\nAcme Runtime supports stateless MCP handlers and durable agents.\n\n## Quickstart\n\nUse createMcpHandler() and deploy with the edge runtime CLI.\n`,
+	},
+	"/vitepress/reference": {
+		title: "Acme API Reference",
+		canonicalUrl: `${contentBase}/vitepress/reference`,
+		body: `
+		<div class="vitepress app-shell">
+			<header>Navigation</header>
+			<main class="vp-doc">
+				<article>
+					<h1>Acme API Reference</h1>
+					<p>The Acme runtime exposes a stateless handler API and queue-backed background tasks.</p>
+					<div class="admonition warning"><p>Note: validate timeout budgets before production rollout.</p></div>
+					<pre><code class="language-ts">export default createMcpHandler({ runtime: \"edge\" })</code></pre>
+				</article>
+			</main>
+		</div>
+		`,
+	},
+	"/partial-official-doc": {
+		title: "Partial official docs",
+		canonicalUrl: `${contentBase}/partial-official-doc`,
+		body: `
+		<article>
+		<h1>Partial official docs</h1>
+		<p>Official docs still explain the key runtime constraints and configuration model.</p>
+		<p>Use rendered mode when the page shell hides most technical content.</p>
+		</article>
+		`,
+	},
 };
 
 function createContentServer() {
@@ -255,6 +302,11 @@ function createFakeSearchServer() {
 				{ title: "Introducing Example Cloud Agents", url: `${contentBase}/cf-agents/announcement`, content: "Launch announcement for a new agent runtime and MCP support.", publishedDate: "2026-04-07T10:00:00Z", sourceType: "general", sourceCategory: "vendor-blog", resultType: "announcement", engine: "fixture" },
 				{ title: "examplecloud/agents", url: `${contentBase}/cf-agents/repo`, content: "Official repository for Example Cloud Agents.", publishedDate: "2026-04-07T11:00:00Z", sourceType: "github", sourceCategory: "github-repo", resultType: "repository-home", engine: "fixture" },
 				{ title: "examplecloud/agents releases", url: `${contentBase}/cf-agents/release-notes`, content: "Release notes for Example Cloud Agents.", publishedDate: "2026-04-07T12:00:00Z", sourceType: "github", sourceCategory: "release-notes", resultType: "github-releases", engine: "fixture" },
+			];
+		} else if (q.includes("partial") && q.includes("fallback")) {
+			results = [
+				searchItem("Partial official docs", "/partial-official-doc", "Official docs for the partial-result test case.", "2026-04-06T10:30:00Z", "docs", "official-docs"),
+				{ title: "Broken source for partial fallback", url: `${contentBase}/missing-partial-doc`, content: "Broken source that should trigger a fetch failure.", publishedDate: "2026-04-06T09:30:00Z", sourceType: "docs", sourceCategory: "official-docs", resultType: "guide", engine: "fixture" },
 			];
 		} else if (q.includes("react") && q.includes("cach")) {
 			results = [
@@ -471,6 +523,46 @@ async function runBenchmarks() {
 		sample: { title: markdownFetch.title, strategy: markdownFetch.metadata?.strategy, content: markdownFetch.content?.slice(0, 200) },
 	}));
 
+	const mintlifyFetch = await postJson(`${backendBase}/v1/fetch`, {
+		url: `${contentBase}/mintlify/guide`,
+		mode: "auto",
+		extractionProfile: "docs",
+	});
+	results.push(makeCase("fetch-modern-docs-markdown-heuristics", 15, [
+		check("heuristic docs markdown candidate is used", /markdown/i.test(String(mintlifyFetch.metadata?.strategy || "")), 5, JSON.stringify(mintlifyFetch.metadata || {})),
+		check("content contains quickstart docs text", /createMcpHandler|Quickstart|stateless MCP/i.test(mintlifyFetch.content || ""), 5, mintlifyFetch.content),
+		check("extraction confidence is medium or high", ["medium", "high"].includes(String(mintlifyFetch.metadata?.extractionConfidence || "")), 5, JSON.stringify(mintlifyFetch.metadata || {})),
+	], {
+		sample: { title: mintlifyFetch.title, strategy: mintlifyFetch.metadata?.strategy, content: mintlifyFetch.content?.slice(0, 200) },
+	}));
+
+	const structuredFetch = await postJson(`${backendBase}/v1/fetch`, {
+		url: `${contentBase}/vitepress/reference`,
+		mode: "auto",
+		extractionProfile: "docs",
+	});
+	results.push(makeCase("fetch-structured-html-extractor", 15, [
+		check("structured html extractor is used", /structured/i.test(String(structuredFetch.metadata?.strategy || "")), 5, JSON.stringify(structuredFetch.metadata || {})),
+		check("code-aware headings are extracted", Array.isArray(structuredFetch.metadata?.codeAware?.headings) && structuredFetch.metadata.codeAware.headings.length > 0, 5, JSON.stringify(structuredFetch.metadata?.codeAware || {})),
+		check("fallback guidance is present or content is strong", Array.isArray(structuredFetch.metadata?.fallbackRecommendations) || /stateless handler API|createMcpHandler/i.test(structuredFetch.content || ""), 5, JSON.stringify(structuredFetch.metadata || {})),
+	], {
+		sample: { title: structuredFetch.title, strategy: structuredFetch.metadata?.strategy, confidence: structuredFetch.metadata?.extractionConfidence },
+	}));
+
+	const docsSearchTrust = await postJson(`${backendBase}/v1/search`, {
+		query: "react server caching best practices",
+		freshness: "month",
+		maxResults: 3,
+		sourceType: "docs",
+		preferredDomains: ["react.dev", "nextjs.org"],
+	});
+	results.push(makeCase("search-trust-signals", 10, [
+		check("top result exposes trust signals", typeof docsSearchTrust.results?.[0]?.trustSignals?.authority === "string", 5, JSON.stringify(docsSearchTrust.results?.[0] || {})),
+		check("top result is marked official or high authority", docsSearchTrust.results?.[0]?.trustSignals?.official === true || docsSearchTrust.results?.[0]?.trustSignals?.authority === "high", 5, JSON.stringify(docsSearchTrust.results?.[0]?.trustSignals || {})),
+	], {
+		sample: docsSearchTrust.results?.[0],
+	}));
+
 	const bestPractice = await postJson(`${backendBase}/v1/research`, {
 		question: "What are current best practices for React server caching?",
 		mode: "best-practice",
@@ -520,6 +612,21 @@ async function runBenchmarks() {
 		sample: { answer: instructionHeavyTechnical.answer, recommendation: instructionHeavyTechnical.recommendation, categories: (instructionHeavyTechnical.sources || []).map((item) => item.sourceCategory) },
 	}));
 
+	const partialResearch = await postJson(`${backendBase}/v1/research`, {
+		question: "Partial fallback research query for docs reliability",
+		mode: "technical",
+		freshness: "month",
+		numberOfSources: 2,
+		outputDepth: "brief",
+	});
+	results.push(makeCase("research-partial-result-recovery", 15, [
+		check("research returns partial success instead of total abort", ["partial_success", "success"].includes(String(partialResearch.status || "")), 5, JSON.stringify({ status: partialResearch.status, failures: partialResearch.failures })),
+		check("research preserves at least one usable source", (partialResearch.sources || []).length >= 1, 5, JSON.stringify(partialResearch.sources || [])),
+		check("failures or retry suggestions are exposed", (Array.isArray(partialResearch.failures) && partialResearch.failures.length > 0) || (Array.isArray(partialResearch.retrySuggestions) && partialResearch.retrySuggestions.length > 0), 5, JSON.stringify({ failures: partialResearch.failures, retrySuggestions: partialResearch.retrySuggestions })),
+	], {
+		sample: { status: partialResearch.status, failures: partialResearch.failures, retrySuggestions: partialResearch.retrySuggestions },
+	}));
+
 	const reactUpgrade = await postJson(`${backendBase}/v1/research`, {
 		question: "React 19 official upgrade considerations",
 		mode: "technical",
@@ -561,13 +668,14 @@ async function runBenchmarks() {
 			{ url: `${contentBase}/community-react-caching`, title: "Community React caching discussion" },
 		],
 	});
-	results.push(makeCase("analyze-official-vs-community", 10, [
-		check("agreements exist", Array.isArray(analysis.agreements) && analysis.agreements.length > 0, 2.5, JSON.stringify(analysis.agreements || [])),
-		check("disagreements exist", Array.isArray(analysis.disagreements) && analysis.disagreements.length > 0, 2.5, JSON.stringify(analysis.disagreements || [])),
-		check("official source category is preserved", hasCategory(analysis.sources, "official-docs"), 2.5, (analysis.sources || []).map((item) => item.sourceCategory).join(", ")),
-		check("strongest evidence is produced", Array.isArray(analysis.strongestEvidence) && analysis.strongestEvidence.length > 0, 2.5, JSON.stringify(analysis.strongestEvidence || [])),
+	results.push(makeCase("analyze-official-vs-community", 15, [
+		check("agreements exist", Array.isArray(analysis.agreements) && analysis.agreements.length > 0, 3, JSON.stringify(analysis.agreements || [])),
+		check("disagreements exist", Array.isArray(analysis.disagreements) && analysis.disagreements.length > 0, 3, JSON.stringify(analysis.disagreements || [])),
+		check("official source category is preserved", hasCategory(analysis.sources, "official-docs"), 3, (analysis.sources || []).map((item) => item.sourceCategory).join(", ")),
+		check("strongest evidence is produced", Array.isArray(analysis.strongestEvidence) && analysis.strongestEvidence.length > 0, 3, JSON.stringify(analysis.strongestEvidence || [])),
+		check("decision-support fields are present", typeof analysis.officialPosition === "string" && typeof analysis.recommendation === "string", 3, JSON.stringify({ officialPosition: analysis.officialPosition, recommendation: analysis.recommendation })),
 	], {
-		sample: { categories: (analysis.sources || []).map((item) => item.sourceCategory) },
+		sample: { categories: (analysis.sources || []).map((item) => item.sourceCategory), recommendation: analysis.recommendation },
 	}));
 
 	const cacheWarm = await postJson(`${backendBase}/v1/research`, {

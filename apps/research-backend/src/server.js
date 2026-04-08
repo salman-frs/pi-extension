@@ -35,6 +35,7 @@ const server = http.createServer(async (req, res) => {
 				config: {
 					searxngConfigured: Boolean(config.searxngUrl),
 					playwrightEnabled: config.playwrightEnabled,
+					structuredExtractionEnabled: config.structuredExtractionEnabled,
 					browserMode: config.browserMode,
 					maxFetchedSources: config.maxFetchedSources,
 					cacheEnabled: config.cacheEnabled,

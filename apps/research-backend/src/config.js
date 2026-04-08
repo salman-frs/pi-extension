@@ -9,6 +9,7 @@ export function loadConfig() {
 		userAgent: trim(process.env.USER_AGENT) || "pi-research-backend/0.1",
 		browserMode: trim(process.env.BROWSER_MODE) || "auto",
 		playwrightEnabled: parseBoolean(process.env.PLAYWRIGHT_ENABLED, false),
+		structuredExtractionEnabled: parseBoolean(process.env.STRUCTURED_EXTRACTION_ENABLED, true),
 		playwrightLaunchOptions: {
 			headless: parseBoolean(process.env.PLAYWRIGHT_HEADLESS, true),
 		},
