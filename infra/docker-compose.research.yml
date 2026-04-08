@@ -1,0 +1,38 @@
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - BASE_URL=http://localhost:8080/
+      - INSTANCE_NAME=pi-research-searxng
+      - SEARXNG_SECRET=${SEARXNG_SECRET}
+    volumes:
+      - searxng-data:/etc/searxng
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+
+  pi-research-backend:
+    image: node:22-bookworm
+    container_name: pi-research-backend
+    restart: unless-stopped
+    working_dir: /app/apps/research-backend
+    command: sh -lc "node src/server.js"
+    ports:
+      - "8787:8787"
+    environment:
+      - PORT=8787
+      - HOST=0.0.0.0
+      - REQUEST_TIMEOUT_MS=30000
+      - MAX_FETCHED_SOURCES=6
+      - SEARXNG_URL=http://searxng:8080
+      - PLAYWRIGHT_ENABLED=false
+      - BROWSER_MODE=auto
+    volumes:
+      - ../:/app
+    depends_on:
+      - searxng
+
+volumes:
+  searxng-data:

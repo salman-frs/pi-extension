@@ -1,0 +1,16 @@
+{
+  "rules": [
+    {
+      "domain": "developers.cloudflare.com",
+      "pathSuffixCandidates": [
+        "llms-full.txt",
+        "index.md"
+      ],
+      "rootCandidates": [
+        "/llms-full.txt",
+        "/llms.txt"
+      ],
+      "accept": "text/markdown, text/plain;q=0.9, text/html;q=0.8, */*;q=0.5"
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "languageHints": {
+    "id": [
+      "pakai",
+      "cara",
+      "dengan",
+      "bagaimana"
+    ]
+  },
+  "expansions": {
+    "tech stack": ["technology stack", "developer stack", "popular technologies"],
+    "terpopuler": ["most popular", "widely used"],
+    "tahun": ["year"],
+    "github": ["repository", "repo", "issues", "discussions", "releases"],
+    "upgrade": ["migration", "release notes", "breaking changes"],
+    "server actions": ["server actions", "server action", "app router actions"],
+    "formdata": ["form data", "FormData"],
+    "uncommon": ["niche", "less known", "emerging"],
+    "new": ["latest", "2025", "2026"],
+    "mcp": ["model context protocol", "remote mcp", "mcp server"],
+    "agent": ["agents sdk", "agent runtime", "stateless agent"]
+  },
+  "intentTemplates": {
+    "news": [
+      "{query}",
+      "{query} recent developments",
+      "{query} last 48 hours"
+    ],
+    "docs": [
+      "{query}",
+      "{query} official documentation",
+      "{query} guide reference"
+    ],
+    "github": [
+      "{query}",
+      "{query} github",
+      "{query} github issue",
+      "{query} github discussion",
+      "{query} github releases"
+    ],
+    "technical-change": [
+      "{query}",
+      "{query} migration guide",
+      "{query} release notes",
+      "{query} breaking changes",
+      "{query} github issue"
+    ],
+    "architecture": [
+      "{query}",
+      "{query} trade-offs",
+      "{query} compare",
+      "{query} official guidance",
+      "{query} prescriptive guidance"
+    ],
+    "bugfix": [
+      "{query}",
+      "{query} troubleshooting",
+      "{query} known issue",
+      "{query} github issue",
+      "{query} discussion"
+    ],
+    "discovery": [
+      "{query}",
+      "{query} official docs",
+      "{query} getting started",
+      "{query} github repo",
+      "{query} release notes",
+      "{query} launch announcement"
+    ]
+  },
+  "politicalEntities": []
+}

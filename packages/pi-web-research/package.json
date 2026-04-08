@@ -1,0 +1,26 @@
+{
+  "name": "pi-web-research",
+  "version": "0.1.0",
+  "description": "Pi package that adds grounded web research tools for technical task completion.",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "web-research",
+    "pi"
+  ],
+  "files": [
+    "extensions",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  }
+}

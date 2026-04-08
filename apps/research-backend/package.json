@@ -1,0 +1,20 @@
+{
+  "name": "@pi-extension/research-backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "check": "node --check src/server.js",
+    "qa:e2e": "node ../../qa/e2e-research-stack.mjs",
+    "qa:playwright": "node ../../qa/playwright-fallback.mjs",
+    "qa:benchmark": "node ../../qa/research-quality-benchmark.mjs",
+    "qa:benchmark:live": "node ../../qa/live-research-benchmark.mjs",
+    "qa:benchmark:live:full": "LIVE_BENCHMARK_PROFILE=full node ../../qa/live-research-benchmark.mjs",
+    "qa:benchmark:agent": "node ../../qa/pi-agent-task-benchmark.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.59.1"
+  }
+}

@@ -1,0 +1,13 @@
+node_modules/
+.local/
+.pi/
+temp/
+.DS_Store
+.env
+.env.*
+!.env.example
+playwright-report/
+test-results/
+qa/reports/
+*.log
+tmp/

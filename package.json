@@ -1,0 +1,37 @@
+{
+  "name": "pi-extension",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "extensions/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "task": "node tools/dev-task.mjs",
+    "extension:new": "node tools/new-extension.mjs",
+    "dev:research-backend": "npm --workspace @pi-extension/research-backend run dev",
+    "dev:research-backend:bg": "node tools/dev-task.mjs start research-backend --cwd apps/research-backend -- node src/server.js",
+    "dev:research-backend:logs": "node tools/dev-task.mjs logs research-backend",
+    "dev:research-backend:stop": "node tools/dev-task.mjs stop research-backend",
+    "dev:research-stack:up": "docker compose --env-file .env -f infra/docker-compose.research.yml up -d",
+    "dev:research-stack:down": "docker compose --env-file .env -f infra/docker-compose.research.yml down -v",
+    "dev:research-stack:logs": "docker compose --env-file .env -f infra/docker-compose.research.yml logs -f --tail=100",
+    "dev:backend": "npm run dev:research-backend",
+    "dev:backend:bg": "npm run dev:research-backend:bg",
+    "dev:backend:logs": "npm run dev:research-backend:logs",
+    "dev:backend:stop": "npm run dev:research-backend:stop",
+    "qa:research:e2e": "npm --workspace @pi-extension/research-backend run qa:e2e",
+    "qa:research:playwright": "npm --workspace @pi-extension/research-backend run qa:playwright",
+    "qa:research:benchmark": "npm --workspace @pi-extension/research-backend run qa:benchmark",
+    "qa:research:benchmark:live": "npm --workspace @pi-extension/research-backend run qa:benchmark:live",
+    "qa:research:benchmark:live:full": "npm --workspace @pi-extension/research-backend run qa:benchmark:live:full",
+    "qa:research:benchmark:agent": "npm --workspace @pi-extension/research-backend run qa:benchmark:agent",
+    "qa:e2e": "npm run qa:research:e2e",
+    "qa:playwright": "npm run qa:research:playwright",
+    "qa:benchmark": "npm run qa:research:benchmark",
+    "qa:benchmark:live": "npm run qa:research:benchmark:live",
+    "qa:benchmark:live:full": "npm run qa:research:benchmark:live:full",
+    "qa:benchmark:agent": "npm run qa:research:benchmark:agent"
+  }
+}

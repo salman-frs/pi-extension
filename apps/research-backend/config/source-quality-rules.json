@@ -1,0 +1,30 @@
+{
+  "officialDocsDomains": [
+    "react.dev",
+    "nextjs.org",
+    "nodejs.org",
+    "python.org",
+    "developer.mozilla.org",
+    "web.dev",
+    "docs.github.com",
+    "docs.npmjs.com",
+    "developers.cloudflare.com",
+    "docs.aws.amazon.com",
+    "aws.amazon.com",
+    "opentelemetry.io"
+  ],
+  "majorMediaDomains": [],
+  "wireServiceDomains": [],
+  "mainstreamMediaDomains": [],
+  "forumDomains": [
+    "reddit.com",
+    "stackoverflow.com",
+    "news.ycombinator.com",
+    "discuss.python.org",
+    "community.vercel.com",
+    "forums.swift.org",
+    "forum.djangoproject.com"
+  ],
+  "surveyDomains": [],
+  "aggregatorDomains": []
+}
