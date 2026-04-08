@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { annotateBenchmarkCases, renderBenchmarkMappingSection, summarizeBenchmarkFamilies } from "./lib/benchmark-reporting.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(SCRIPT_DIR, "..");
@@ -229,7 +230,7 @@ function sleep(ms) {
 
 async function runAgentTask(task) {
 	const env = { ...process.env, PI_RESEARCH_BASE_URL: backendBase };
-	const proc = spawn("pi", ["--mode", "rpc", "--no-session", "-e", EXTENSION_ENTRY], {
+	const proc = spawn("pi", ["--mode", "rpc", "--no-session", "--no-extensions", "-e", EXTENSION_ENTRY], {
 		cwd: PROJECT_ROOT,
 		env,
 		stdio: ["pipe", "pipe", "pipe"],
@@ -266,7 +267,7 @@ async function runAgentTask(task) {
 		const id = message.id;
 		const timeout = setTimeout(() => {
 			pending.delete(id);
-			reject(new Error(`RPC timeout waiting for ${id}`));
+			reject(new Error(`RPC timeout waiting for ${id}. stderr=${stderr}`));
 		}, timeoutMs);
 		pending.set(id, { resolve, reject, timeout });
 		proc.stdin.write(JSON.stringify(message) + "\n");
@@ -411,9 +412,11 @@ async function main() {
 			}));
 		}
 
-		const totalScore = cases.reduce((sum, item) => sum + item.score, 0);
-		const totalMaxScore = cases.reduce((sum, item) => sum + item.maxScore, 0);
+		const annotatedCases = annotateBenchmarkCases("agent", cases);
+		const totalScore = annotatedCases.reduce((sum, item) => sum + item.score, 0);
+		const totalMaxScore = annotatedCases.reduce((sum, item) => sum + item.maxScore, 0);
 		const percentage = Math.round((totalScore / totalMaxScore) * 100);
+		const benchmarkFamilies = summarizeBenchmarkFamilies(annotatedCases);
 		const report = {
 			ok: percentage >= 85,
 			totalScore,
@@ -421,7 +424,8 @@ async function main() {
 			percentage,
 			generatedAt: new Date().toISOString(),
 			mode: "pi-agent-task",
-			cases,
+			benchmarkFamilies,
+			cases: annotatedCases,
 		};
 
 		await mkdir(REPORT_DIR, { recursive: true });
@@ -456,9 +460,14 @@ function renderMarkdownReport(report) {
 		"## Cases",
 		"",
 	];
+	lines.push(renderBenchmarkMappingSection(report));
 	for (const item of report.cases) {
 		lines.push(`### ${item.name}`);
 		lines.push(`- Score: ${item.score}/${item.maxScore}`);
+		if (item.benchmarkStyle) {
+			lines.push(`- Benchmark family: ${item.benchmarkStyle.family}`);
+			lines.push(`- Public styles: ${item.benchmarkStyle.publicStyles.join(", ")}`);
+		}
 		lines.push(`- Tools used: ${item.toolNames.join(", ")}`);
 		for (const rule of item.checks) {
 			lines.push(`- [${rule.pass ? "x" : " "}] ${rule.name} (${rule.points}/${rule.maxPoints})`);

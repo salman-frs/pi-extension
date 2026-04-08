@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { annotateBenchmarkCases, renderBenchmarkMappingSection, summarizeBenchmarkFamilies } from "./lib/benchmark-reporting.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(SCRIPT_DIR, "..");
@@ -504,6 +505,21 @@ async function runBenchmarks() {
 		sample: { answer: technical.answer, categories: (technical.sources || []).map((item) => item.sourceCategory) },
 	}));
 
+	const instructionHeavyTechnical = await postJson(`${backendBase}/v1/research`, {
+		question: "Use the research_query tool once in technical mode to assess the impact of upgrading CacheX from v1 to v2. Return exactly these sections: Risks, Migration steps, Citations. In Citations include source title and URL.",
+		mode: "technical",
+		freshness: "month",
+		numberOfSources: 4,
+		outputDepth: "brief",
+	});
+	results.push(makeCase("research-instruction-heavy-sanitization", 15, [
+		check("canonical migration sources are still retrieved", hasCategory(instructionHeavyTechnical.sources, "official-docs") && hasCategory(instructionHeavyTechnical.sources, "release-notes"), 5, JSON.stringify((instructionHeavyTechnical.sources || []).map((item) => ({ title: item.title, category: item.sourceCategory })))),
+		check("answer still references upgrade or migration", /upgrade|migration|breaking|adapter|invalidation/i.test(instructionHeavyTechnical.answer || ""), 5, instructionHeavyTechnical.answer),
+		check("recommendation or findings mention adapter or invalidation specifics", /adapter|invalidation/i.test(JSON.stringify([instructionHeavyTechnical.recommendation, instructionHeavyTechnical.findings, instructionHeavyTechnical.risks])), 5, JSON.stringify({ recommendation: instructionHeavyTechnical.recommendation, findings: instructionHeavyTechnical.findings, risks: instructionHeavyTechnical.risks })),
+	], {
+		sample: { answer: instructionHeavyTechnical.answer, recommendation: instructionHeavyTechnical.recommendation, categories: (instructionHeavyTechnical.sources || []).map((item) => item.sourceCategory) },
+	}));
+
 	const reactUpgrade = await postJson(`${backendBase}/v1/research`, {
 		question: "React 19 official upgrade considerations",
 		mode: "technical",
@@ -590,9 +606,10 @@ async function main() {
 		await writeFile(docsFetchRulesPath, JSON.stringify({ rules: [{ domain: "127.0.0.1", pathSuffixCandidates: ["llms-full.txt"], accept: "text/markdown, text/plain;q=0.9, text/html;q=0.8, */*;q=0.5" }] }, null, 2));
 		backend = startBackend();
 		await waitForHealth(backendBase);
-		const cases = await runBenchmarks();
+		const cases = annotateBenchmarkCases("deterministic", await runBenchmarks());
 		const totalScore = cases.reduce((sum, item) => sum + item.score, 0);
 		const totalMaxScore = cases.reduce((sum, item) => sum + item.maxScore, 0);
+		const benchmarkFamilies = summarizeBenchmarkFamilies(cases);
 		const percentage = Math.round((totalScore / totalMaxScore) * 100);
 		const report = {
 			ok: percentage >= 85,
@@ -600,6 +617,7 @@ async function main() {
 			totalMaxScore,
 			percentage,
 			generatedAt: new Date().toISOString(),
+			benchmarkFamilies,
 			cases,
 		};
 
@@ -635,9 +653,14 @@ function renderMarkdownReport(report) {
 		"## Cases",
 		"",
 	];
+	lines.push(renderBenchmarkMappingSection(report));
 	for (const item of report.cases) {
 		lines.push(`### ${item.name}`);
 		lines.push(`- Score: ${item.score}/${item.maxScore}`);
+		if (item.benchmarkStyle) {
+			lines.push(`- Benchmark family: ${item.benchmarkStyle.family}`);
+			lines.push(`- Public styles: ${item.benchmarkStyle.publicStyles.join(", ")}`);
+		}
 		for (const rule of item.checks) {
 			lines.push(`- [${rule.pass ? "x" : " "}] ${rule.name} (${rule.points}/${rule.maxPoints})`);
 			if (rule.detail) lines.push(`  - Detail: ${rule.detail}`);

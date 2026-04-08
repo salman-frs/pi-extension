@@ -93,8 +93,13 @@ interface ResearchSource {
 
 interface ResearchOutput {
 	answer?: string;
+	recommendation?: string;
 	summary?: string;
 	findings?: string[];
+	bestPractices?: string[];
+	tradeOffs?: string[];
+	risks?: string[];
+	mitigations?: string[];
 	agreements?: string[];
 	disagreements?: string[];
 	sources?: ResearchSource[];
@@ -251,6 +256,7 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use this tool for multi-source research questions instead of ad hoc browsing when you need a grounded answer.",
 			"Prefer this tool for current events, technical change analysis, and best-practice research.",
+			"Base your answer and citations on the sources returned by this tool; do not invent or substitute citations.",
 			"If the evidence is weak or conflicting, call that out rather than overclaiming certainty.",
 		],
 		parameters: ResearchQueryParams,
@@ -292,6 +298,7 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use this tool when you already know the relevant sources and need structured comparison.",
 			"Prefer this tool for agreement, difference, timeline, and official-vs-community analysis.",
+			"Base your comparison and citations on the sources returned or supplied here; do not invent consensus or substitute outside citations.",
 			"Do not invent consensus; report conflicts explicitly when sources diverge.",
 		],
 		parameters: AnalyzeSourcesParams,
@@ -1059,6 +1066,7 @@ async function performResearchQuery(
 	];
 	return {
 		answer: `Fallback mode assembled grounded source evidence for: ${params.question}`,
+		recommendation: fetched[0]?.title ? `Start from ${fetched[0].title} and validate against the remaining sources before acting.` : undefined,
 		summary: `Research bundle assembled from ${fetched.length} source(s). This fallback mode compiles grounded evidence for Pi to synthesize into a final answer.`,
 		findings: [
 			`Question: ${params.question}`,
@@ -1066,6 +1074,12 @@ async function performResearchQuery(
 			params.sourcePolicy ? `Source policy: ${params.sourcePolicy}` : undefined,
 			params.freshness !== "any" ? `Freshness filter: ${params.freshness}` : undefined,
 		].filter(Boolean) as string[],
+		bestPractices: [
+			fetched.some((source) => source.sourceCategory === "official-docs") ? "Use official documentation as the starting point when available." : undefined,
+		].filter(Boolean) as string[],
+		tradeOffs: ["Fallback mode preserves grounded evidence but does not perform the full backend ranking and synthesis workflow."],
+		risks: ["Fallback mode may miss disagreement signals or exact canonical source selection that the backend would normally compute."],
+		mitigations: ["If precision matters, rerun with a configured research backend for stronger ranking and synthesis."],
 		agreements,
 		disagreements,
 		sources: fetched,
@@ -1080,8 +1094,13 @@ async function performResearchQuery(
 function normalizeResearchOutput(raw: any): ResearchOutput {
 	return {
 		answer: stringify(raw?.answer),
+		recommendation: stringify(raw?.recommendation),
 		summary: stringify(raw?.summary),
 		findings: arrayOfStrings(raw?.findings),
+		bestPractices: arrayOfStrings(raw?.bestPractices) ?? arrayOfStrings(raw?.best_practices),
+		tradeOffs: arrayOfStrings(raw?.tradeOffs) ?? arrayOfStrings(raw?.trade_offs),
+		risks: arrayOfStrings(raw?.risks),
+		mitigations: arrayOfStrings(raw?.mitigations),
 		agreements: arrayOfStrings(raw?.agreements),
 		disagreements: arrayOfStrings(raw?.disagreements),
 		sources: normalizeResearchSources(raw?.sources ?? raw?.citations),
@@ -1277,6 +1296,11 @@ function renderResearchOutput(question: string, result: ResearchOutput): string 
 		lines.push(result.answer);
 		lines.push("");
 	}
+	if (result.recommendation) {
+		lines.push("Recommendation:");
+		lines.push(result.recommendation);
+		lines.push("");
+	}
 	if (result.summary) {
 		lines.push("Summary:");
 		lines.push(result.summary);
@@ -1285,6 +1309,26 @@ function renderResearchOutput(question: string, result: ResearchOutput): string 
 	if (result.findings?.length) {
 		lines.push("Key findings:");
 		for (const finding of result.findings) lines.push(`- ${finding}`);
+		lines.push("");
+	}
+	if (result.bestPractices?.length) {
+		lines.push("Best practices:");
+		for (const item of result.bestPractices) lines.push(`- ${item}`);
+		lines.push("");
+	}
+	if (result.tradeOffs?.length) {
+		lines.push("Trade-offs:");
+		for (const item of result.tradeOffs) lines.push(`- ${item}`);
+		lines.push("");
+	}
+	if (result.risks?.length) {
+		lines.push("Risks:");
+		for (const item of result.risks) lines.push(`- ${item}`);
+		lines.push("");
+	}
+	if (result.mitigations?.length) {
+		lines.push("Mitigations:");
+		for (const item of result.mitigations) lines.push(`- ${item}`);
 		lines.push("");
 	}
 	if (result.agreements?.length) {
@@ -1298,6 +1342,11 @@ function renderResearchOutput(question: string, result: ResearchOutput): string 
 		lines.push("");
 	}
 	if (result.sources?.length) {
+		lines.push("Citation candidates:");
+		for (const source of result.sources.slice(0, 5)) {
+			lines.push(`- ${source.title ?? source.url ?? "Untitled source"}${source.url ? ` — ${source.url}` : ""}`);
+		}
+		lines.push("");
 		lines.push("Sources:");
 		result.sources.forEach((source, index) => {
 			lines.push(`${index + 1}. ${source.title ?? source.url ?? "Untitled source"}`);
@@ -1346,6 +1395,11 @@ function renderAnalyzeOutput(question: string, comparisonMode: string, result: A
 		lines.push("");
 	}
 	if (result.sources?.length) {
+		lines.push("Citation candidates:");
+		for (const source of result.sources.slice(0, 5)) {
+			lines.push(`- ${source.title ?? source.url ?? "Untitled source"}${source.url ? ` — ${source.url}` : ""}`);
+		}
+		lines.push("");
 		lines.push("Sources:");
 		result.sources.forEach((source, index) => {
 			lines.push(`${index + 1}. ${source.title ?? source.url ?? "Untitled source"}`);

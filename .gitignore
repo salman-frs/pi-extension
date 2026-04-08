@@ -9,5 +9,6 @@ temp/
 playwright-report/
 test-results/
 qa/reports/
+archive/
 *.log
 tmp/

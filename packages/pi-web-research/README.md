@@ -2,6 +2,11 @@
 
 Canonical publishable Pi package for the `web-research` extension.
 
+`web-research` is intended to be a reusable research layer:
+- Pi can use it directly
+- future Pi extensions can rely on it for grounded web context
+- higher-level extensions should build on its search/fetch/research outputs instead of re-implementing internet research from scratch
+
 ## Install into Pi
 
 Recommended:
@@ -43,3 +48,13 @@ The menu lets you:
 - save SearXNG fallback URL
 - adjust advanced settings
 - clear saved config
+
+## Native smoke test in this repo
+
+After installing the published package into Pi, you can run:
+
+```bash
+npm run qa:package-smoke
+```
+
+That script verifies the installed package can register `/web-research` and execute `search_web`, `fetch_url`, and `research_query` through Pi's native RPC flow.

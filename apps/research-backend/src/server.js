@@ -1,5 +1,6 @@
 import http from "node:http";
 import { loadConfig } from "./config.js";
+import { decorateMetadata, buildAnalyzeResponseSections, buildResearchResponseSections } from "./contracts.js";
 import { createCacheStore } from "./lib/cache.js";
 import { errorResponse, json, methodNotAllowed, notFound, readJsonBody, unauthorized } from "./lib/http.js";
 import { createLogger, nextRequestId } from "./lib/logger.js";
@@ -66,12 +67,11 @@ const server = http.createServer(async (req, res) => {
 				status: result.status,
 				results: result.results,
 				errors: result.errors,
-				metadata: {
-					...(result.metadata || {}),
+				metadata: decorateMetadata("search", result.metadata || {}, {
 					diagnostics: result.diagnostics,
 					requestId,
 					durationMs: Date.now() - requestStartedAt,
-				},
+				}),
 			}, baseHeaders);
 		}
 
@@ -84,11 +84,10 @@ const server = http.createServer(async (req, res) => {
 			}, helpers);
 			return json(res, 200, {
 				...result,
-				metadata: {
-					...(result.metadata || {}),
+				metadata: decorateMetadata("fetch", result.metadata || {}, {
 					requestId,
 					durationMs: Date.now() - requestStartedAt,
-				},
+				}),
 			}, baseHeaders);
 		}
 
@@ -106,11 +105,11 @@ const server = http.createServer(async (req, res) => {
 			}, helpers);
 			return json(res, 200, {
 				...result,
-				metadata: {
-					...(result.metadata || {}),
+				metadata: decorateMetadata("research", result.metadata || {}, {
+					responseSections: buildResearchResponseSections(result),
 					requestId,
 					durationMs: Date.now() - requestStartedAt,
-				},
+				}),
 			}, baseHeaders);
 		}
 
@@ -123,11 +122,11 @@ const server = http.createServer(async (req, res) => {
 			}, helpers);
 			return json(res, 200, {
 				...result,
-				metadata: {
-					...(result.metadata || {}),
+				metadata: decorateMetadata("analyze", result.metadata || {}, {
+					responseSections: buildAnalyzeResponseSections(result),
 					requestId,
 					durationMs: Date.now() - requestStartedAt,
-				},
+				}),
 			}, baseHeaders);
 		}
 

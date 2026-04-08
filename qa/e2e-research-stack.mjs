@@ -1,6 +1,7 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
-
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -182,7 +183,7 @@ function assert(condition, message) {
 }
 
 async function rpcRoundtrip(message, env = {}) {
-	const proc = spawn("pi", ["--mode", "rpc", "--no-session", "-e", EXTENSION_ENTRY], {
+	const proc = spawn("pi", ["--mode", "rpc", "--no-session", "--no-extensions", "-e", EXTENSION_ENTRY], {
 		cwd: PROJECT_ROOT,
 		env: { ...process.env, ...env },
 		stdio: ["pipe", "pipe", "pipe"],
@@ -221,6 +222,7 @@ async function rpcRoundtrip(message, env = {}) {
 async function main() {
 	const contentServer = createContentServer();
 	const searchServer = createFakeSearchServer();
+	const isolatedHome = await mkdtemp(resolve(tmpdir(), "pi-e2e-home-"));
 	let backend;
 	try {
 		await waitForServer(contentServer, ports.content);
@@ -282,7 +284,7 @@ async function main() {
 		const invalidate = await postJson(`${backendBase}/v1/cache/invalidate`, { namespace: "research" });
 		assert(invalidate.ok === true, "cache invalidation endpoint should work");
 
-		const commands = await rpcRoundtrip({ type: "get_commands" }, { PI_RESEARCH_BASE_URL: backendBase });
+		const commands = await rpcRoundtrip({ type: "get_commands" }, { PI_RESEARCH_BASE_URL: backendBase, HOME: isolatedHome, USERPROFILE: isolatedHome });
 		assert(commands.response.success === true, "RPC get_commands should succeed");
 		const names = (commands.response.data?.commands || []).map((command) => command.name);
 		assert(names.includes("web-research"), "extension should register /web-research");
@@ -290,7 +292,7 @@ async function main() {
 		assert(!names.includes("research-config"), "extension should not register legacy /research-config");
 		assert(!names.includes("research-health"), "extension should not register legacy /research-health");
 
-		const commandExec = await rpcRoundtrip({ type: "prompt", message: "/web-research status" }, { PI_RESEARCH_BASE_URL: backendBase });
+		const commandExec = await rpcRoundtrip({ type: "prompt", message: "/web-research status" }, { PI_RESEARCH_BASE_URL: backendBase, HOME: isolatedHome, USERPROFILE: isolatedHome });
 		assert(commandExec.response.success === true, "extension command /web-research status should execute successfully");
 
 		console.log("QA PASS: backend and extension basic E2E flow is working.");

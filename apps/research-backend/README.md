@@ -26,6 +26,8 @@ Key behavior:
 - docs-aware markdown / LLM-text fetch preference for supported docs domains
 - typed error payloads and partial-success responses
 - caching and telemetry hooks
+- stable output contracts for Pi and future extension consumers
+- research outputs with recommendation / best-practice / trade-off / risk / mitigation sections
 
 ## Local start
 
@@ -122,7 +124,16 @@ Additional checks:
 npm run qa:playwright
 npm run qa:benchmark:live:full
 npm run qa:benchmark:agent
+npm run qa:benchmark:compare
 ```
+
+## Output contracts
+
+See:
+- `apps/research-backend/API.md`
+- `apps/research-backend/OUTPUT_SCHEMA.md`
+
+These documents describe the stable Phase 1 response shapes intended for Pi and downstream extension consumers.
 
 ## Delivery notes
 

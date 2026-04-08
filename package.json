@@ -27,11 +27,15 @@
     "qa:research:benchmark:live": "npm --workspace @pi-extension/research-backend run qa:benchmark:live",
     "qa:research:benchmark:live:full": "npm --workspace @pi-extension/research-backend run qa:benchmark:live:full",
     "qa:research:benchmark:agent": "npm --workspace @pi-extension/research-backend run qa:benchmark:agent",
+    "qa:research:benchmark:compare": "npm --workspace @pi-extension/research-backend run qa:benchmark:compare",
+    "qa:research:package-smoke": "node qa/native-installed-package-smoke.mjs",
     "qa:e2e": "npm run qa:research:e2e",
     "qa:playwright": "npm run qa:research:playwright",
     "qa:benchmark": "npm run qa:research:benchmark",
     "qa:benchmark:live": "npm run qa:research:benchmark:live",
     "qa:benchmark:live:full": "npm run qa:research:benchmark:live:full",
-    "qa:benchmark:agent": "npm run qa:research:benchmark:agent"
+    "qa:benchmark:agent": "npm run qa:research:benchmark:agent",
+    "qa:benchmark:compare": "npm run qa:research:benchmark:compare",
+    "qa:package-smoke": "npm run qa:research:package-smoke"
   }
 }

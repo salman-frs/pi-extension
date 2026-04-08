@@ -16,6 +16,11 @@ The current flagship extension is:
 - `extensions/web-research` — thin local dev wrapper for the package
 - `apps/research-backend` — backend that powers search, fetch, research, and analysis workflows
 
+`web-research` is intended to be reusable infrastructure:
+- Pi can use it directly
+- future Pi extensions can depend on it for grounded internet research
+- higher-level extensions should build on its search/fetch/research outputs instead of re-implementing web research from scratch
+
 ## Repo structure
 
 - `extensions/` — local dev wrappers / repo-friendly extension entrypoints
@@ -139,10 +144,14 @@ Additional checks:
 npm run qa:playwright
 npm run qa:benchmark:live:full
 npm run qa:benchmark:agent
+npm run qa:benchmark:compare
+npm run qa:package-smoke
 ```
 
 Reports are written to:
 - `qa/reports/`
+
+Benchmark reporting now includes public-style benchmark mapping notes so the suite can be interpreted against families such as SimpleQA-like, BrowseComp-like, GAIA-like, and FRAMES-like evaluation styles.
 
 ## Package delivery
 

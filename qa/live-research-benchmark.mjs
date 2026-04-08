@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { annotateBenchmarkCases, renderBenchmarkMappingSection, summarizeBenchmarkFamilies } from "./lib/benchmark-reporting.mjs";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -27,9 +28,10 @@ async function main() {
 		for (const benchmarkCase of selectCasesForProfile()) {
 			cases.push(await benchmarkCase());
 		}
-
-		const totalScore = cases.reduce((sum, item) => sum + item.score, 0);
-		const totalMaxScore = cases.reduce((sum, item) => sum + item.maxScore, 0);
+		const annotatedCases = annotateBenchmarkCases("live", cases);
+		const totalScore = annotatedCases.reduce((sum, item) => sum + item.score, 0);
+		const totalMaxScore = annotatedCases.reduce((sum, item) => sum + item.maxScore, 0);
+		const benchmarkFamilies = summarizeBenchmarkFamilies(annotatedCases);
 		const percentage = Math.round((totalScore / totalMaxScore) * 100);
 		const report = {
 			ok: percentage >= 70,
@@ -39,7 +41,8 @@ async function main() {
 			generatedAt: new Date().toISOString(),
 			mode: "live",
 			profile: PROFILE,
-			cases,
+			benchmarkFamilies,
+			cases: annotatedCases,
 		};
 
 		await mkdir(REPORT_DIR, { recursive: true });
@@ -401,9 +404,14 @@ function renderMarkdownReport(report) {
 		"## Cases",
 		"",
 	];
+	lines.push(renderBenchmarkMappingSection(report));
 	for (const item of report.cases) {
 		lines.push(`### ${item.name}`);
 		lines.push(`- Score: ${item.score}/${item.maxScore}`);
+		if (item.benchmarkStyle) {
+			lines.push(`- Benchmark family: ${item.benchmarkStyle.family}`);
+			lines.push(`- Public styles: ${item.benchmarkStyle.publicStyles.join(", ")}`);
+		}
 		for (const rule of item.checks) {
 			lines.push(`- [${rule.pass ? "x" : " "}] ${rule.name} (${rule.points}/${rule.maxPoints})`);
 			if (rule.detail) lines.push(`  - Detail: ${rule.detail}`);

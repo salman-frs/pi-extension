@@ -12,7 +12,8 @@
     "qa:benchmark": "node ../../qa/research-quality-benchmark.mjs",
     "qa:benchmark:live": "node ../../qa/live-research-benchmark.mjs",
     "qa:benchmark:live:full": "LIVE_BENCHMARK_PROFILE=full node ../../qa/live-research-benchmark.mjs",
-    "qa:benchmark:agent": "node ../../qa/pi-agent-task-benchmark.mjs"
+    "qa:benchmark:agent": "node ../../qa/pi-agent-task-benchmark.mjs",
+    "qa:benchmark:compare": "node ../../qa/research-comparison-benchmark.mjs"
   },
   "dependencies": {
     "playwright": "^1.59.1"

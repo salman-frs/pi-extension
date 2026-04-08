@@ -1,0 +1,71 @@
+export const OUTPUT_SCHEMA_VERSION = "2026-04-08.v1";
+
+export const OUTPUT_CONTRACTS = {
+	search: "pi.web-research.search.v1",
+	fetch: "pi.web-research.fetch.v1",
+	research: "pi.web-research.research.v1",
+	analyze: "pi.web-research.analyze.v1",
+};
+
+const DEFAULT_HINTS = {
+	search: {
+		recommendedNextTools: ["fetch_url", "research_query"],
+		suitableFor: ["candidate-discovery", "downstream-extension-input"],
+		stableFields: ["title", "url", "snippet", "sourceType", "sourceCategory", "resultType", "domain", "publishedAt", "ranking"],
+	},
+	fetch: {
+		recommendedNextTools: ["research_query", "analyze_sources"],
+		suitableFor: ["exact-source-retrieval", "citation-support", "downstream-extension-input"],
+		stableFields: ["url", "canonicalUrl", "title", "content", "fetchMode", "contentType", "metadata.codeAware"],
+	},
+	research: {
+		recommendedNextTools: ["analyze_sources"],
+		suitableFor: ["general-research", "deep-research", "decision-support", "downstream-extension-input"],
+		stableFields: ["answer", "recommendation", "summary", "bestPractices", "tradeOffs", "risks", "mitigations", "sources", "confidence", "gaps"],
+	},
+	analyze: {
+		recommendedNextTools: [],
+		suitableFor: ["source-comparison", "downstream-extension-input"],
+		stableFields: ["summary", "agreements", "disagreements", "strongestEvidence", "gaps", "sources"],
+	},
+};
+
+export function decorateMetadata(kind, metadata = {}, extras = {}) {
+	return {
+		contract: OUTPUT_CONTRACTS[kind],
+		schemaVersion: OUTPUT_SCHEMA_VERSION,
+		outputKind: kind,
+		consumerHints: DEFAULT_HINTS[kind],
+		...metadata,
+		...extras,
+	};
+}
+
+export function buildResearchResponseSections(result = {}) {
+	return [
+		"answer",
+		result.recommendation ? "recommendation" : undefined,
+		result.summary ? "summary" : undefined,
+		Array.isArray(result.findings) && result.findings.length ? "findings" : undefined,
+		Array.isArray(result.bestPractices) && result.bestPractices.length ? "bestPractices" : undefined,
+		Array.isArray(result.tradeOffs) && result.tradeOffs.length ? "tradeOffs" : undefined,
+		Array.isArray(result.risks) && result.risks.length ? "risks" : undefined,
+		Array.isArray(result.mitigations) && result.mitigations.length ? "mitigations" : undefined,
+		Array.isArray(result.agreements) && result.agreements.length ? "agreements" : undefined,
+		Array.isArray(result.disagreements) && result.disagreements.length ? "disagreements" : undefined,
+		Array.isArray(result.sources) && result.sources.length ? "sources" : undefined,
+		result.confidence ? "confidence" : undefined,
+		Array.isArray(result.gaps) && result.gaps.length ? "gaps" : undefined,
+	].filter(Boolean);
+}
+
+export function buildAnalyzeResponseSections(result = {}) {
+	return [
+		result.summary ? "summary" : undefined,
+		Array.isArray(result.agreements) && result.agreements.length ? "agreements" : undefined,
+		Array.isArray(result.disagreements) && result.disagreements.length ? "disagreements" : undefined,
+		Array.isArray(result.strongestEvidence) && result.strongestEvidence.length ? "strongestEvidence" : undefined,
+		Array.isArray(result.gaps) && result.gaps.length ? "gaps" : undefined,
+		Array.isArray(result.sources) && result.sources.length ? "sources" : undefined,
+	].filter(Boolean);
+}

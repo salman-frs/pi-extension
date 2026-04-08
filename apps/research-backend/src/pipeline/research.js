@@ -4,7 +4,7 @@ import { searchGitHubWeb } from "../adapters/discovery/github-web.js";
 import { fetchDirect } from "../adapters/extraction/direct.js";
 import { stableCacheKey } from "../lib/cache.js";
 import { buildQueryPlan } from "../query-planner.js";
-import { bestSentences, cleanupWhitespace, extractCallouts, extractCanonicalUrl, extractCodeBlocks, extractHeadings, extractTitle, htmlToText, topKeywords } from "../lib/text.js";
+import { bestSentences, cleanupWhitespace, extractCallouts, extractCanonicalUrl, extractCodeBlocks, extractHeadings, extractTitle, htmlToText, splitSentences, topKeywords } from "../lib/text.js";
 import { clip, domainMatches, hostnameFromUrl } from "../lib/utils.js";
 import { detectDisagreementSignals, rankFetchedSources, rankSearchResults, summarizeSourceCategories, summarizeSourceTypes } from "../ranking.js";
 import { classifySourceCategory, inferSourceType, isAuthoritativeCategory } from "../source-quality.js";
@@ -226,6 +226,12 @@ export async function researchWorkflow(config, params, helpers) {
 		const disagreements = buildDisagreements(ranked, params.mode, questionPlan.constraintProfile);
 		const confidence = computeConfidence(ranked, questionPlan.constraintProfile);
 
+		const recommendation = buildRecommendation({ ...params, question: questionPlan.searchQuery || params.question }, ranked, questionPlan.constraintProfile);
+		const bestPractices = buildBestPractices(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile);
+		const tradeOffs = buildTradeOffs(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile);
+		const risks = buildRisks(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile);
+		const mitigations = buildMitigations(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile);
+		const gaps = buildGaps(ranked, confidence, questionPlan.constraintProfile);
 		return {
 			status:
 				search.status === "failure" && ranked.length === 0
@@ -234,13 +240,18 @@ export async function researchWorkflow(config, params, helpers) {
 						? "no_results"
 						: (search.errors?.length ? "partial_success" : "success"),
 			answer: buildAnswer({ ...params, question: questionPlan.searchQuery || params.question }, ranked, agreements, disagreements, questionPlan.constraintProfile),
+			recommendation,
 			summary: buildSummary(params, ranked, sourceTypes, sourceCategories, keywords, selection),
 			findings,
+			bestPractices,
+			tradeOffs,
+			risks,
+			mitigations,
 			agreements,
 			disagreements,
 			sources: ranked,
 			confidence,
-			gaps: buildGaps(ranked, confidence, questionPlan.constraintProfile),
+			gaps,
 			metadata: {
 				strategy: "web-research-workflow",
 				keywords,
@@ -338,6 +349,79 @@ function buildAnswer(params, sources, agreements, disagreements, constraintProfi
 	].filter(Boolean).join(" ");
 }
 
+function buildRecommendation(params, sources, constraintProfile) {
+	if (sources.length === 0) {
+		return `No grounded recommendation is available for “${params.question}” because no usable sources were retrieved.`;
+	}
+	const lead = sources[0];
+	const authoritativeCount = sources.filter((source) => isAuthoritativeCategory(source.sourceCategory)).length;
+	const exactCoverage = exactTermsMatchSource(lead, constraintProfile?.exactTerms || []);
+	const recommendationLead = lead?.title ? `Prefer starting from ${lead.title}` : "Start from the highest-ranked source";
+	const authorityClause = authoritativeCount > 0 ? ` because ${authoritativeCount} primary or authoritative source(s) support the bundle` : " because the available evidence is limited";
+	const verificationClause = exactCoverage || (constraintProfile?.exactTerms || []).length === 0
+		? " and use the supporting sources to validate trade-offs and edge cases."
+		: ", but verify the exact technical identifier manually before acting.";
+	return `${recommendationLead}${authorityClause}${verificationClause}`;
+}
+
+function buildBestPractices(question, sources, constraintProfile) {
+	const signals = collectSourceSignals(question, sources, {
+		patterns: [/\bshould\b/i, /\brecommend(?:ed|s)?\b/i, /best practice/i, /\bprefer\b/i, /\buse\b/i, /\bvalidate\b/i, /\bdocument\b/i, /\bobservability\b/i],
+		limit: 4,
+	});
+	if (signals.length > 0) return signals;
+	const fallbacks = [];
+	if (sources.some((source) => isAuthoritativeCategory(source.sourceCategory))) {
+		fallbacks.push("Use authoritative docs or primary sources as the implementation anchor before applying community guidance.");
+	}
+	if (["architecture", "technical-change", "migration"].includes(constraintProfile?.queryMode)) {
+		fallbacks.push("Validate operational trade-offs and rollout implications before committing to the recommended path.");
+	}
+	return uniqueNonEmpty(fallbacks).slice(0, 4);
+}
+
+function buildTradeOffs(question, sources, constraintProfile) {
+	const signals = collectSourceSignals(question, sources, {
+		patterns: [/trade-?off/i, /\bhowever\b/i, /\bbut\b/i, /\bversus\b|\bvs\b/i, /\bcost\b/i, /\bcomplex(?:ity)?\b/i, /\blatency\b/i, /\bperformance\b/i, /\bflexib(?:le|ility)\b/i],
+		limit: 4,
+	});
+	if (signals.length > 0) return signals;
+	const fallbacks = [];
+	if (sources.length >= 2) fallbacks.push("The retrieved sources emphasize different trade-offs, so compare canonical guidance with supporting evidence before deciding.");
+	if (constraintProfile?.decisionMode) fallbacks.push("The best option depends on which trade-offs matter most for your runtime, complexity budget, and operational constraints.");
+	return uniqueNonEmpty(fallbacks).slice(0, 4);
+}
+
+function buildRisks(question, sources, constraintProfile) {
+	const signals = collectSourceSignals(question, sources, {
+		patterns: [/\brisk/i, /\bcaveat/i, /warning/i, /deprecated/i, /breaking/i, /limitation/i, /edge case/i, /compatib(?:le|ility)/i, /security/i, /stale/i],
+		limit: 4,
+	});
+	if (signals.length > 0) return signals;
+	const fallbacks = [];
+	if (["migration", "technical-change"].includes(constraintProfile?.queryMode)) {
+		fallbacks.push("Upgrade and migration work carries compatibility risk if release notes and migration guidance are not validated together.");
+	}
+	if (["config", "api", "bugfix"].includes(constraintProfile?.queryMode)) {
+		fallbacks.push("Exact config or API identifiers may still need manual verification against primary references before implementation.");
+	}
+	return uniqueNonEmpty(fallbacks).slice(0, 4);
+}
+
+function buildMitigations(question, sources, constraintProfile) {
+	const signals = collectSourceSignals(question, sources, {
+		patterns: [/\bmitigat/i, /\bvalidate\b/i, /\btest\b/i, /\bphase(?:d)?\b/i, /\bstaging\b/i, /\brollback\b/i, /\bobserve\b/i, /\bmonitor/i, /\breview\b/i, /\bverify\b/i],
+		limit: 4,
+	});
+	if (signals.length > 0) return signals;
+	const fallbacks = [];
+	fallbacks.push("Verify the recommended path against primary documentation before applying it broadly.");
+	if (["migration", "technical-change"].includes(constraintProfile?.queryMode)) {
+		fallbacks.push("Use staged rollout, observability, and rollback readiness when applying changes suggested by release or migration research.");
+	}
+	return uniqueNonEmpty(fallbacks).slice(0, 4);
+}
+
 function buildAgreements(sources, keywords, constraintProfile) {
 	const outputs = [];
 	if (keywords.length > 0) outputs.push(`Repeated themes across sources include ${keywords.slice(0, 6).join(", ")}.`);
@@ -371,6 +455,41 @@ function buildGaps(sources, confidence, constraintProfile) {
 		gaps.push("No selected source matched the strongest exact technical identifier from the query.");
 	}
 	return gaps;
+}
+
+function collectSourceSignals(question, sources, options = {}) {
+	const patterns = Array.isArray(options.patterns) ? options.patterns : [];
+	const limit = Number.isFinite(options.limit) ? options.limit : 4;
+	const collected = [];
+	for (const source of sources.slice(0, 5)) {
+		const sentences = [
+			...(bestSentences(source.excerpt || source.snippet || source.title || "", question, 3) || []),
+			...splitSentences(source.excerpt || source.snippet || "").slice(0, 4),
+		];
+		for (const sentence of uniqueNonEmpty(sentences)) {
+			if (!patterns.some((pattern) => pattern.test(sentence))) continue;
+			collected.push(cleanSignalSentence(sentence, source.title || source.url));
+			if (collected.length >= limit) return uniqueNonEmpty(collected).slice(0, limit);
+		}
+	}
+	return uniqueNonEmpty(collected).slice(0, limit);
+}
+
+function cleanSignalSentence(sentence) {
+	const cleaned = cleanupWhitespace(String(sentence || ""))
+		.replace(/^[-*]\s*/, "")
+		.replace(/\n+/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+	if (!cleaned) return undefined;
+	if (cleaned.length < 24) return undefined;
+	if (/\b(search|learn|reference|community|blog|react@\d|skip to content)\b/i.test(cleaned) && cleaned.split(" ").length > 18) return undefined;
+	const limitedByWords = cleaned.split(" ").slice(0, 40).join(" ");
+	return limitedByWords.length > 220 ? `${limitedByWords.slice(0, 217)}...` : limitedByWords;
+}
+
+function uniqueNonEmpty(values) {
+	return [...new Set((values || []).filter(Boolean))];
 }
 
 function computeConfidence(sources, constraintProfile) {

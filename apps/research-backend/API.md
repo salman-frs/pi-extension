@@ -61,6 +61,12 @@ Response:
     }
   ],
   "metadata": {
+    "contract": "pi.web-research.search.v1",
+    "schemaVersion": "2026-04-08.v1",
+    "outputKind": "search",
+    "consumerHints": {
+      "recommendedNextTools": ["fetch_url", "research_query"]
+    },
     "requestId": "req_...",
     "durationMs": 38
   }
@@ -96,6 +102,9 @@ Response:
   "contentType": "text/html",
   "status": 200,
   "metadata": {
+    "contract": "pi.web-research.fetch.v1",
+    "schemaVersion": "2026-04-08.v1",
+    "outputKind": "fetch",
     "strategy": "docs-markdown-fetch",
     "sourceVariant": "docs-markdown",
     "resolvedUrl": "https://developers.cloudflare.com/agents/llms-full.txt",
@@ -140,8 +149,13 @@ Response:
 ```json
 {
   "answer": "...",
+  "recommendation": "Prefer starting from the canonical upgrade guide and validate against supporting sources before acting.",
   "summary": "...",
   "findings": ["..."],
+  "bestPractices": ["Use the official migration guide as the implementation anchor."],
+  "tradeOffs": ["Release notes are broader, while migration guides are more implementation-specific."],
+  "risks": ["Breaking changes may still require manual validation in edge cases."],
+  "mitigations": ["Use staged rollout and regression checks before broad adoption."],
   "agreements": ["..."],
   "disagreements": ["..."],
   "sources": [
@@ -163,6 +177,10 @@ Response:
   "confidence": "medium",
   "gaps": ["..."],
   "metadata": {
+    "contract": "pi.web-research.research.v1",
+    "schemaVersion": "2026-04-08.v1",
+    "outputKind": "research",
+    "responseSections": ["answer", "recommendation", "summary", "bestPractices", "tradeOffs", "risks", "mitigations", "sources", "confidence", "gaps"],
     "strategy": "web-research-workflow",
     "selection": {
       "anchorTitle": "React 19 Upgrade Guide",
@@ -238,6 +256,10 @@ Response:
   "gaps": ["..."],
   "sources": [],
   "metadata": {
+    "contract": "pi.web-research.analyze.v1",
+    "schemaVersion": "2026-04-08.v1",
+    "outputKind": "analyze",
+    "responseSections": ["summary", "agreements", "disagreements", "strongestEvidence", "gaps", "sources"],
     "comparisonMode": "official-vs-community",
     "cache": {
       "hit": false,
@@ -249,6 +271,10 @@ Response:
 ```
 
 ---
+
+## Stable output contract
+
+See `apps/research-backend/OUTPUT_SCHEMA.md` for the stable Phase 1 contract intended for Pi and downstream extension consumers.
 
 ## Cache invalidation
 

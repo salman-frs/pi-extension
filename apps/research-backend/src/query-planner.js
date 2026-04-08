@@ -106,6 +106,8 @@ function sanitizeTaskQuery(query) {
 	cleaned = cleaned.replace(/^then\s+/i, "");
 	cleaned = cleaned.replace(/^brief me on\s+/i, "");
 	cleaned = cleaned.replace(/^assess\s+/i, "assess ");
+	cleaned = cleaned.replace(/^(assess|evaluate) the impact of\s+/i, "");
+	cleaned = cleaned.replace(/^(assess|evaluate) impact of\s+/i, "");
 	cleaned = cleaned.replace(/\s+/g, " ").trim();
 	return cleaned || raw;
 }
@@ -130,7 +132,7 @@ function detectIntent(query, sourceType, mode, language) {
 	if (/\b(new|novel|uncommon|niche|emerging|latest|newer)\b/.test(query) && /\b(framework|library|sdk|tool|runtime|platform|agent|mcp|server|edge)\b/.test(query)) return "discovery";
 	if (/\bvs\b|\bversus\b|\bcompare\b|trade-?off|architecture|microservices|monolith|eventbridge|sqs/.test(query)) return "architecture";
 	if (/bug|error|fix|regression|not working|troubleshooting|formdata|server actions/.test(query)) return "bugfix";
-	if (/upgrade|migration|deprecated|breaking changes|release notes/.test(query) || mode === "technical") return "technical-change";
+	if (/upgrade|upgrading|migrate|migrating|migration|deprecated|breaking changes|release notes/.test(query) || mode === "technical") return "technical-change";
 	if (sourceType === "news" || mode === "news") return "news";
 	if (sourceType === "docs" || mode === "best-practice") return "docs";
 	return "general";
@@ -246,7 +248,7 @@ function toKeywordQuery(query) {
 function detectQueryMode(query, intent, exactTerms = []) {
 	if (/\brepo\b|\brepository\b|\bofficial repo\b/.test(query)) return "repo";
 	if (/\breleases?\b|\bchangelog\b/.test(query)) return "release";
-	if (/\bupgrade\b|\bmigrate\b|\bmigration\b|\bbreaking changes?\b/.test(query)) return "migration";
+	if (/\bupgrade\b|\bupgrading\b|\bmigrate\b|\bmigrating\b|\bmigration\b|\bbreaking changes?\b/.test(query)) return "migration";
 	if (/\bconfig\b|\bconfiguration\b|\boption\b|\bsettings?\b|next\.config/.test(query)) return "config";
 	if (/\bapi\b|\breference\b|\bhook\b|\bfunction\b/.test(query)) return "api";
 	if (exactTerms.some((term) => /body.?size|proxyclientmaxbodysize|middlewareclientmaxbodysize|maxbody|config/i.test(term))) return "config";
@@ -263,7 +265,7 @@ function detectQueryMode(query, intent, exactTerms = []) {
 function detectCanonicalPreference(query, intent, exactTerms = []) {
 	if (/\brepo\b|\brepository\b/.test(query)) return "repo";
 	if (/\breleases?\b|\bchangelog\b/.test(query)) return "release";
-	if (/\bupgrade\b|\bmigrate\b|\bmigration\b|\bbreaking changes?\b/.test(query) || intent === "technical-change") return "migration";
+	if (/\bupgrade\b|\bupgrading\b|\bmigrate\b|\bmigrating\b|\bmigration\b|\bbreaking changes?\b/.test(query) || intent === "technical-change") return "migration";
 	if (/\bconfig\b|\bconfiguration\b|\boption\b|\bsettings?\b|next\.config/.test(query)) return "config";
 	if (/\bapi\b|\breference\b|\bhook\b|\bfunction\b/.test(query)) return "api";
 	if (exactTerms.some((term) => /body.?size|proxyclientmaxbodysize|middlewareclientmaxbodysize|maxbody|config/i.test(term))) return "config";
