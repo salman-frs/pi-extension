@@ -21,7 +21,7 @@ const DEFAULT_HINTS = {
 	research: {
 		recommendedNextTools: ["analyze_sources"],
 		suitableFor: ["general-research", "deep-research", "decision-support", "downstream-extension-input"],
-		stableFields: ["answer", "recommendation", "summary", "bestPractices", "tradeOffs", "risks", "mitigations", "sources", "confidence", "gaps", "failures", "retrySuggestions"],
+		stableFields: ["answer", "recommendation", "summary", "bestPractices", "tradeOffs", "risks", "mitigations", "selectionRationale", "confidenceRationale", "freshnessRationale", "sources", "confidence", "gaps", "failures", "retrySuggestions"],
 	},
 	analyze: {
 		recommendedNextTools: [],
@@ -51,6 +51,9 @@ export function buildResearchResponseSections(result = {}) {
 		Array.isArray(result.tradeOffs) && result.tradeOffs.length ? "tradeOffs" : undefined,
 		Array.isArray(result.risks) && result.risks.length ? "risks" : undefined,
 		Array.isArray(result.mitigations) && result.mitigations.length ? "mitigations" : undefined,
+		result.selectionRationale ? "selectionRationale" : undefined,
+		result.confidenceRationale ? "confidenceRationale" : undefined,
+		result.freshnessRationale ? "freshnessRationale" : undefined,
 		Array.isArray(result.agreements) && result.agreements.length ? "agreements" : undefined,
 		Array.isArray(result.disagreements) && result.disagreements.length ? "disagreements" : undefined,
 		Array.isArray(result.sources) && result.sources.length ? "sources" : undefined,

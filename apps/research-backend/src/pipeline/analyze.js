@@ -1,4 +1,5 @@
 import { stableCacheKey } from "../lib/cache.js";
+import { summarizeTrace, traceStep } from "../lib/tracing.js";
 import { bestSentences, topKeywords } from "../lib/text.js";
 import { clip, hostnameFromUrl, unique } from "../lib/utils.js";
 import { rankFetchedSources, summarizeSourceCategories } from "../ranking.js";
@@ -12,7 +13,7 @@ export async function analyzeWorkflow(config, params, helpers) {
 		sources: params.sources,
 	});
 	const startedAt = Date.now();
-	const { value, cache } = await memo(helpers, "analyze", key, config.analyzeCacheTtlMs, async () => {
+	const { value, cache } = await memo(helpers, "analyze", key, config.analyzeCacheTtlMs, async () => traceStep(helpers, "analyze.workflow", { comparisonMode: params.comparisonMode }, async () => {
 		const hydrated = [];
 		for (const source of params.sources) {
 			if (source.content) {
@@ -57,6 +58,7 @@ export async function analyzeWorkflow(config, params, helpers) {
 		if (ranked.length < 2) gaps.push("Fewer than two usable sources were available for comparison.");
 		if (disagreements.length === 0) gaps.push("No strong disagreement was automatically detected; manual review may still be needed.");
 
+		helpers.telemetry?.addEvent?.(helpers.trace, "analyze.completed", { comparisonMode: params.comparisonMode, sourceCount: ranked.length });
 		return {
 			summary: buildSummary(ranked, params.comparisonMode),
 			agreements,
@@ -76,7 +78,7 @@ export async function analyzeWorkflow(config, params, helpers) {
 				rankingVisible: true,
 			},
 		};
-	});
+	}));
 	helpers.logger?.info("analyze.completed", {
 		requestId: helpers.requestId,
 		question: params.question,
@@ -90,7 +92,7 @@ export async function analyzeWorkflow(config, params, helpers) {
 		metadata: {
 			...(value.metadata || {}),
 			cache,
-			trace: { requestId: helpers.requestId },
+			trace: summarizeTrace(helpers.trace) || { requestId: helpers.requestId },
 		},
 	};
 }

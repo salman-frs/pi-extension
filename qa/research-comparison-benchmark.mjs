@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -12,6 +13,8 @@ const REPORT_DIR = resolve(PROJECT_ROOT, "qa", "reports");
 const backendBase = process.env.RESEARCH_COMPARISON_BASE_URL || "http://127.0.0.1:8787";
 const COMPOSE_FILE = resolve(PROJECT_ROOT, "infra", "docker-compose.research.yml");
 const COMPOSE_ENV_FILE = resolve(PROJECT_ROOT, ".env");
+
+loadRootEnvFile(COMPOSE_ENV_FILE);
 
 async function main() {
 	let stackStarted = false;
@@ -263,6 +266,28 @@ async function compose(args) {
 
 function sleep(ms) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function loadRootEnvFile(path) {
+	if (!existsSync(path)) return;
+	const raw = readFileSync(path, "utf8");
+	for (const line of raw.split(/\r?\n/)) {
+		const trimmed = line.trim();
+		if (!trimmed || trimmed.startsWith("#")) continue;
+		const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+		if (!match) continue;
+		const [, key, value] = match;
+		if (process.env[key] != null && process.env[key] !== "") continue;
+		process.env[key] = stripEnvQuotes(value);
+	}
+}
+
+function stripEnvQuotes(value) {
+	const trimmed = String(value || "").trim();
+	if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+		return trimmed.slice(1, -1);
+	}
+	return trimmed;
 }
 
 async function postJson(url, body) {

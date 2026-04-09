@@ -2,7 +2,28 @@ import { hostnameFromUrl } from "../../lib/utils.js";
 import { classifyUpstreamSearchError } from "../../errors.js";
 import { inferSourceType } from "../../source-quality.js";
 
-export async function searchSearxng(config, params, plan, fetchWithTimeout, logger, requestId) {
+export async function searchSearxng(config, params, plan, fetchWithTimeout, logger, requestId, telemetry, trace) {
+	const gate = telemetry?.shouldAllowProvider?.("searxng");
+	if (gate && gate.allowed === false) {
+		const error = { code: "PROVIDER_CIRCUIT_OPEN", message: `Search provider searxng temporarily disabled until ${gate.retryAt}`, retryable: true, details: { provider: "searxng", retryAt: gate.retryAt } };
+		logger?.warn("search.provider_circuit_open", { requestId, provider: "searxng", retryAt: gate.retryAt });
+		return {
+			status: "failure",
+			results: [],
+			errors: [error],
+			diagnostics: {
+				originalQuery: plan.originalQuery,
+				normalizedQuery: plan.normalizedQuery,
+				language: plan.language,
+				intent: plan.intent,
+				entities: plan.entities,
+				queryRewrites: [],
+				provider: "searxng",
+				circuitOpen: true,
+				retryAt: gate.retryAt,
+			},
+		};
+	}
 	if (!config.searxngUrl) {
 		throw new Error("SEARXNG_URL is not configured");
 	}
@@ -20,12 +41,17 @@ export async function searchSearxng(config, params, plan, fetchWithTimeout, logg
 	const errors = [];
 
 	for (const query of queries) {
+		const startedAt = Date.now();
 		try {
 			const results = await runQueryWithRetry(config, params, query, fetchWithTimeout, logger, requestId);
 			collected.push(...results);
+			telemetry?.addEvent?.(trace, "provider.query", { provider: "searxng", query, resultCount: results.length, status: "success" });
+			telemetry?.recordProviderResult?.("searxng", { ok: true, status: "success", latencyMs: Date.now() - startedAt });
 		} catch (error) {
 			const typed = classifyUpstreamSearchError(error, { provider: "searxng", query });
 			errors.push({ code: typed.code, message: typed.message, retryable: typed.retryable, details: typed.details });
+			telemetry?.addEvent?.(trace, "provider.query", { provider: "searxng", query, status: "failure", code: typed.code });
+			telemetry?.recordProviderResult?.("searxng", { ok: false, status: "failure", code: typed.code, error: typed.message, latencyMs: Date.now() - startedAt });
 			logger?.warn("search.provider_failed", { requestId, provider: "searxng", query, error: typed });
 		}
 	}

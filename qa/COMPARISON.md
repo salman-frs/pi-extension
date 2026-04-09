@@ -76,6 +76,8 @@ Make sure the local backend is healthy first, then run:
 npm run qa:benchmark:compare
 ```
 
+If you place optional comparison secrets like `TAVILY_API_KEY` in the repo root `.env`, the comparison harness now loads them automatically.
+
 Reports are written to:
 - `qa/reports/research-comparison-benchmark-latest.json`
 - `qa/reports/research-comparison-benchmark-latest.md`

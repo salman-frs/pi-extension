@@ -1,6 +1,6 @@
 {
   "name": "pi-web-research",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Pi package that adds grounded web research tools for technical task completion.",
   "type": "module",
   "keywords": [

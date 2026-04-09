@@ -40,6 +40,56 @@ export function renderBenchmarkMappingSection(report) {
 	return lines.join("\n");
 }
 
+export function summarizeFailureBuckets(cases) {
+	const summary = new Map();
+	for (const benchmarkCase of cases || []) {
+		for (const rule of benchmarkCase.checks || []) {
+			if (rule.pass) continue;
+			const bucket = classifyFailureBucket(benchmarkCase, rule);
+			const current = summary.get(bucket) || { bucket, failures: 0, pointsLost: 0, examples: [] };
+			current.failures += 1;
+			current.pointsLost += Number(rule.maxPoints || 0) - Number(rule.points || 0);
+			if (current.examples.length < 3) current.examples.push(`${benchmarkCase.name}: ${rule.name}`);
+			summary.set(bucket, current);
+		}
+	}
+	return [...summary.values()].sort((a, b) => b.pointsLost - a.pointsLost || b.failures - a.failures);
+}
+
+export function renderFailureBucketSection(report) {
+	const buckets = report.failureBuckets || [];
+	const lines = [
+		"## Failure buckets",
+		"",
+	];
+	if (!buckets.length) {
+		lines.push("- No failed checks were recorded in this run.");
+		lines.push("");
+		return lines.join("\n");
+	}
+	for (const bucket of buckets) {
+		lines.push(`- **${bucket.bucket}** — ${bucket.failures} failed check(s), ${bucket.pointsLost} point(s) lost`);
+		for (const example of bucket.examples || []) lines.push(`  - ${example}`);
+	}
+	lines.push("");
+	return lines.join("\n");
+}
+
+export function summarizeStability(runs) {
+	const values = (runs || []).map((item) => Number(item?.percentage)).filter((value) => Number.isFinite(value));
+	if (!values.length) return undefined;
+	const min = Math.min(...values);
+	const max = Math.max(...values);
+	const avg = Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2));
+	return {
+		runs: values.length,
+		min,
+		max,
+		avg,
+		spread: Number((max - min).toFixed(2)),
+	};
+}
+
 function describeBenchmarkStyle(mode, caseName) {
 	const name = String(caseName || "").toLowerCase();
 	if (mode === "agent") {
@@ -75,4 +125,17 @@ function describeBenchmarkStyle(mode, caseName) {
 		publicStyles: ["Custom technical benchmark"],
 		rationale: "Covers technical web-research behaviors that generic public benchmarks do not fully capture.",
 	};
+}
+
+function classifyFailureBucket(benchmarkCase, rule) {
+	const haystack = `${benchmarkCase?.name || ""} ${rule?.name || ""} ${rule?.detail || ""}`.toLowerCase();
+	if (/official|canonical|preferred-domain|preferred domain|exact config|exact reference|release/.test(haystack)) return "official-or-canonical-retrieval";
+	if (/ranking|reason|explanation|trace/.test(haystack)) return "ranking-and-explainability";
+	if (/trust|authority|freshness/.test(haystack)) return "trust-and-freshness-signals";
+	if (/fetch|markdown|html|content|extraction|rendered|shell/.test(haystack)) return "extraction-and-fetch-quality";
+	if (/answer|summary|recommendation|agreement|disagreement|citation|ground/.test(haystack)) return "synthesis-and-grounding";
+	if (/tool|agent|workflow|section/.test(haystack)) return "agent-orchestration";
+	if (/cache|latency|performance/.test(haystack)) return "cache-and-performance";
+	if (/result|source|count|search/.test(haystack)) return "retrieval-coverage";
+	return "other";
 }

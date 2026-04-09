@@ -230,6 +230,9 @@ async function main() {
 		backend = startBackend();
 		const health = await waitForHealth(backendBase);
 		assert(health.ok === true, "backend health should be ok");
+		assert(typeof health.config?.researchProfile === "string", "health should expose research profile");
+		assert(typeof health.config?.traceMode === "string", "health should expose trace mode");
+		assert(Array.isArray(health.telemetry?.providerHealth), "health should expose provider health summary");
 
 		const search = await postJson(`${backendBase}/v1/search`, {
 			query: "react caching best practices",
@@ -264,9 +267,13 @@ async function main() {
 		assert(typeof research.answer === "string" && research.answer.length > 0, "research should produce answer");
 		assert(typeof research.summary === "string" && research.summary.length > 0, "research should produce summary");
 		assert(Array.isArray(research.findings) && research.findings.length > 0, "research should produce findings");
+		assert(typeof research.selectionRationale === "string", "research should produce selection rationale");
+		assert(typeof research.confidenceRationale === "string", "research should produce confidence rationale");
+		assert(typeof research.freshnessRationale === "string", "research should produce freshness rationale");
 		assert(Array.isArray(research.agreements), "research should produce agreements");
 		assert(Array.isArray(research.disagreements), "research should produce disagreements");
 		assert(Array.isArray(research.sources) && research.sources.length >= 2, "research should produce sources");
+		assert(Array.isArray(research.metadata?.trace?.stages), "research metadata should expose trace stages");
 		assert(typeof research.sources[0].sourceCategory === "string", "research sources should expose categories");
 		assert(typeof research.confidence === "string", "research should produce confidence");
 		assert(Array.isArray(research.retrySuggestions) || Array.isArray(research.failures) || research.status === "success", "research should expose retry/failure info when partial");
@@ -285,6 +292,12 @@ async function main() {
 		assert(typeof analyze.sources[0].sourceCategory === "string", "analyze should classify source categories");
 		assert(typeof analyze.recommendation === "string" || typeof analyze.officialPosition === "string", "analyze should produce decision-support fields");
 
+		const debugMetrics = await fetch(`${backendBase}/debug/metrics`).then((res) => res.json());
+		assert(debugMetrics.ok === true, "debug metrics endpoint should work");
+		assert(typeof debugMetrics.metrics?.counters === "object", "debug metrics should expose counters");
+		const debugTraces = await fetch(`${backendBase}/debug/traces?limit=5`).then((res) => res.json());
+		assert(debugTraces.ok === true, "debug traces endpoint should work");
+		assert(Array.isArray(debugTraces.traces), "debug traces should expose trace list");
 		const invalidate = await postJson(`${backendBase}/v1/cache/invalidate`, { namespace: "research" });
 		assert(invalidate.ok === true, "cache invalidation endpoint should work");
 

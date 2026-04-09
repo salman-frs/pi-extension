@@ -89,6 +89,9 @@ Top-level shape:
 - `tradeOffs[]`
 - `risks[]`
 - `mitigations[]`
+- `selectionRationale`
+- `confidenceRationale`
+- `freshnessRationale`
 - `agreements[]`
 - `disagreements[]`
 - `sources[]`
@@ -104,6 +107,7 @@ Important metadata:
 - `metadata.queryPlan`
 - `metadata.searchDiagnostics`
 - `metadata.partialResult`
+- `metadata.rationales`
 - `metadata.consumerHints`
 
 Intended use:

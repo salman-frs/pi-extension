@@ -142,6 +142,7 @@ function scoreResult(result, context) {
 	applyConstraintFidelity(contributions, result, context.constraintProfile, queryMode);
 
 	const score = contributions.reduce((sum, [value]) => sum + value, 0);
+	const normalizedContributions = contributions.filter(([value]) => value !== 0);
 	return {
 		...result,
 		domain,
@@ -154,8 +155,10 @@ function scoreResult(result, context) {
 			extractionConfidence: result.trustSignals?.extractionConfidence,
 		},
 		ranking: {
-			reasons: contributions.filter(([value]) => value !== 0).map(([value, reason]) => `${reason}:${value > 0 ? "+" : ""}${value}`),
+			reasons: normalizedContributions.map(([value, reason]) => `${reason}:${value > 0 ? "+" : ""}${value}`),
 			contributions: Object.fromEntries(contributions.map(([value, reason]) => [reason, value])),
+			topReason: normalizedContributions[0]?.[1],
+			explanation: buildRankingExplanation(result, normalizedContributions, { domain, sourceCategory, resultType }),
 		},
 	};
 }
@@ -323,6 +326,15 @@ function enforcePreferredDomainPrecision(results, context) {
 		return [...preferred, ...nonPreferred];
 	}
 	return results;
+}
+
+function buildRankingExplanation(result, contributions, context) {
+	const positives = contributions.filter(([value]) => value > 0).sort((a, b) => b[0] - a[0]).slice(0, 3).map(([, reason]) => reason.replace(/-/g, " "));
+	const negatives = contributions.filter(([value]) => value < 0).sort((a, b) => a[0] - b[0]).slice(0, 2).map(([, reason]) => reason.replace(/-/g, " "));
+	const leading = positives.length > 0 ? `Ranked highly because of ${positives.join(", ")}` : "Ranked based on weak or neutral signals";
+	const descriptor = [context.resultType, context.sourceCategory, context.domain].filter(Boolean).join(" / ");
+	const caution = negatives.length > 0 ? `; penalties applied for ${negatives.join(", ")}` : "";
+	return descriptor ? `${leading}; classified as ${descriptor}${caution}.` : `${leading}${caution}.`;
 }
 
 function freshnessScore(value, freshness) {

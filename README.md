@@ -87,7 +87,7 @@ pi -e extensions/web-research/src/index.ts
 Or install the publishable Pi package:
 
 ```bash
-pi install npm:pi-web-research@0.2.1
+pi install npm:pi-web-research@0.3.0
 ```
 
 Then inside Pi:
@@ -161,7 +161,7 @@ For GitHub + npm delivery, the repo includes a publishable Pi package:
 Recommended end-user install path:
 
 ```bash
-pi install npm:pi-web-research@0.2.1
+pi install npm:pi-web-research@0.3.0
 ```
 
 Update path:

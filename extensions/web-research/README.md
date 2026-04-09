@@ -44,7 +44,7 @@ Optional:
 ```bash
 export PI_RESEARCH_API_KEY=...
 export PI_RESEARCH_TIMEOUT_MS=30000
-export PI_RESEARCH_USER_AGENT=web-research/0.1
+export PI_RESEARCH_USER_AGENT=web-research/0.3.0
 ```
 
 ### Load the extension
@@ -58,7 +58,7 @@ pi -e extensions/web-research/src/index.ts
 Or install the publishable Pi package:
 
 ```bash
-pi install npm:pi-web-research@0.2.1
+pi install npm:pi-web-research@0.3.0
 ```
 
 ## Runtime modes
@@ -103,6 +103,12 @@ Saved config can live in either:
 - global scope: `~/.pi/agent/web-research.json`
 
 Environment variables still override saved config when present.
+
+In `/web-research status`:
+- `directSearchFallback` refers to the extension's optional direct SearXNG fallback URL
+- `backendDiscovery` refers to whether the configured backend itself has discovery/search enabled
+
+These are different settings. In normal backend mode, the backend may have discovery enabled even when `directSearchFallback` is `not set`.
 
 ## Local `.pi` shim
 

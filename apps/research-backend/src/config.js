@@ -6,7 +6,7 @@ export function loadConfig() {
 		maxFetchedSources: parsePositiveInt(process.env.MAX_FETCHED_SOURCES) ?? 6,
 		searxngUrl: trim(process.env.SEARXNG_URL),
 		apiKey: trim(process.env.RESEARCH_API_KEY),
-		userAgent: trim(process.env.USER_AGENT) || "pi-research-backend/0.1",
+		userAgent: trim(process.env.USER_AGENT) || "pi-research-backend/0.3.0",
 		browserMode: trim(process.env.BROWSER_MODE) || "auto",
 		playwrightEnabled: parseBoolean(process.env.PLAYWRIGHT_ENABLED, false),
 		structuredExtractionEnabled: parseBoolean(process.env.STRUCTURED_EXTRACTION_ENABLED, true),
@@ -21,6 +21,12 @@ export function loadConfig() {
 		researchCacheTtlMs: parsePositiveInt(process.env.RESEARCH_CACHE_TTL_MS) ?? 300_000,
 		analyzeCacheTtlMs: parsePositiveInt(process.env.ANALYZE_CACHE_TTL_MS) ?? 300_000,
 		telemetryEnabled: parseBoolean(process.env.TELEMETRY_ENABLED, true),
+		traceMode: trim(process.env.TRACE_MODE) || "standard",
+		traceStoreLimit: parsePositiveInt(process.env.TRACE_STORE_LIMIT) ?? 100,
+		providerCircuitBreakerEnabled: parseBoolean(process.env.PROVIDER_CIRCUIT_BREAKER_ENABLED, true),
+		providerFailureThreshold: parsePositiveInt(process.env.PROVIDER_FAILURE_THRESHOLD) ?? 6,
+		providerCooldownMs: parsePositiveInt(process.env.PROVIDER_COOLDOWN_MS) ?? 120000,
+		researchProfile: trim(process.env.RESEARCH_PROFILE) || "stable",
 		docsFetchRulesPath: trim(process.env.DOCS_FETCH_RULES_PATH),
 	};
 }

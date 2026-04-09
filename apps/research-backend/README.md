@@ -13,6 +13,9 @@ This backend is designed to help Pi complete **technical tasks** that require ex
 ## Capabilities
 
 - `GET /health`
+- `GET /debug/traces`
+- `GET /debug/metrics`
+- `GET /debug/providers`
 - `POST /v1/search`
 - `POST /v1/fetch`
 - `POST /v1/research`
@@ -20,16 +23,18 @@ This backend is designed to help Pi complete **technical tasks** that require ex
 - `POST /v1/cache/invalidate`
 
 Key behavior:
-- inspectable ranking reasons
+- inspectable ranking reasons and human-readable ranking explanations
 - exact config / API / migration / repo / release selection
+- canonical-result promotion for exact technical intents
 - GitHub entity resolution for repo and release intent
 - broader docs-aware markdown / LLM-text fetch preference plus heuristic docs-surface discovery
 - structured HTML extraction for modern docs/framework-style pages
 - typed error payloads, partial-success responses, and retry suggestions
 - trust signals such as authority / freshness / extraction confidence
-- caching and telemetry hooks
+- request traces, provider health summaries, and in-memory debug telemetry
+- optional provider circuit-break behavior for repeated upstream failures
 - stable output contracts for Pi and future extension consumers
-- research outputs with recommendation / best-practice / trade-off / risk / mitigation sections
+- research outputs with recommendation / best-practice / trade-off / risk / mitigation sections plus rationale fields
 - source-comparison outputs with stronger decision-support fields
 
 ## Local start
@@ -95,6 +100,12 @@ pi -e extensions/web-research/src/index.ts
 - `RESEARCH_CACHE_TTL_MS`
 - `ANALYZE_CACHE_TTL_MS`
 - `TELEMETRY_ENABLED`
+- `TRACE_MODE` — `minimal`, `standard`, or `debug` style trace verbosity label
+- `TRACE_STORE_LIMIT` — in-memory recent trace buffer size
+- `PROVIDER_CIRCUIT_BREAKER_ENABLED`
+- `PROVIDER_FAILURE_THRESHOLD`
+- `PROVIDER_COOLDOWN_MS`
+- `RESEARCH_PROFILE` — deployment profile label such as `stable` or `docs-heavy`
 - `SOURCE_QUALITY_RULES_PATH`
 - `QUERY_NORMALIZATION_RULES_PATH`
 - `DOCS_FETCH_RULES_PATH`
@@ -130,6 +141,23 @@ npm run qa:benchmark:live:full
 npm run qa:benchmark:agent
 npm run qa:benchmark:compare
 ```
+
+## Debugging and observability
+
+Useful endpoints:
+
+```bash
+curl http://127.0.0.1:8787/health
+curl http://127.0.0.1:8787/debug/providers
+curl http://127.0.0.1:8787/debug/metrics
+curl 'http://127.0.0.1:8787/debug/traces?limit=10'
+```
+
+These endpoints expose:
+- deployment profile and trace mode
+- provider health / degraded / circuit-open state
+- in-memory counters and latency histograms
+- recent trace summaries and stage timing
 
 ## Output contracts
 

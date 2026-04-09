@@ -9,13 +9,23 @@ Authorization: Bearer <token>
 ```
 
 `GET /health` remains unauthenticated.
+`GET /debug/traces`, `GET /debug/metrics`, and `GET /debug/providers` follow normal auth rules when `RESEARCH_API_KEY` is enabled.
 
 ---
 
 ## Health
 
 ### `GET /health`
-Returns service health, config summary, and cache stats.
+Returns service health, config summary, cache stats, deployment profile details, and provider telemetry summary.
+
+### `GET /debug/traces`
+Returns recent in-memory trace summaries and stage timing.
+
+### `GET /debug/metrics`
+Returns in-memory counters, latency histograms, and provider health.
+
+### `GET /debug/providers`
+Returns the current provider health view, including degraded or circuit-open state.
 
 ---
 
@@ -63,7 +73,9 @@ Response:
         "contributions": {
           "category:official-docs": 16,
           "result-type:configuration-reference": 22
-        }
+        },
+        "topReason": "result-type:configuration-reference",
+        "explanation": "Ranked highly because of result type configuration reference, category official docs, and preferred domain."
       }
     }
   ],
@@ -165,6 +177,9 @@ Response:
   "tradeOffs": ["Release notes are broader, while migration guides are more implementation-specific."],
   "risks": ["Breaking changes may still require manual validation in edge cases."],
   "mitigations": ["Use staged rollout and regression checks before broad adoption."],
+  "selectionRationale": "Anchor chosen: React 19 Upgrade Guide. The selected bundle covers the strongest exact identifiers or canonical hints found in the query.",
+  "confidenceRationale": "Confidence is medium based on 4 selected sources, 2 authoritative sources, and 3 distinct domains.",
+  "freshnessRationale": "Freshness preference: year. Newest dated evidence in the selected set: 2026-04-06T10:00:00Z.",
   "agreements": ["..."],
   "disagreements": ["..."],
   "sources": [
@@ -206,7 +221,7 @@ Response:
     "contract": "pi.web-research.research.v1",
     "schemaVersion": "2026-04-08.v1",
     "outputKind": "research",
-    "responseSections": ["answer", "recommendation", "summary", "bestPractices", "tradeOffs", "risks", "mitigations", "sources", "confidence", "gaps"],
+    "responseSections": ["answer", "recommendation", "summary", "bestPractices", "tradeOffs", "risks", "mitigations", "selectionRationale", "confidenceRationale", "freshnessRationale", "sources", "confidence", "gaps"],
     "strategy": "web-research-workflow",
     "selection": {
       "anchorTitle": "React 19 Upgrade Guide",

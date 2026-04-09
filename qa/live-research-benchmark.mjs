@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { annotateBenchmarkCases, renderBenchmarkMappingSection, summarizeBenchmarkFamilies } from "./lib/benchmark-reporting.mjs";
+import { annotateBenchmarkCases, renderBenchmarkMappingSection, renderFailureBucketSection, summarizeBenchmarkFamilies, summarizeFailureBuckets } from "./lib/benchmark-reporting.mjs";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -32,6 +32,7 @@ async function main() {
 		const totalScore = annotatedCases.reduce((sum, item) => sum + item.score, 0);
 		const totalMaxScore = annotatedCases.reduce((sum, item) => sum + item.maxScore, 0);
 		const benchmarkFamilies = summarizeBenchmarkFamilies(annotatedCases);
+		const failureBuckets = summarizeFailureBuckets(annotatedCases);
 		const percentage = Math.round((totalScore / totalMaxScore) * 100);
 		const report = {
 			ok: percentage >= 70,
@@ -42,6 +43,7 @@ async function main() {
 			mode: "live",
 			profile: PROFILE,
 			benchmarkFamilies,
+			failureBuckets,
 			cases: annotatedCases,
 		};
 
@@ -407,6 +409,7 @@ function renderMarkdownReport(report) {
 		"",
 	];
 	lines.push(renderBenchmarkMappingSection(report));
+	lines.push(renderFailureBucketSection(report));
 	for (const item of report.cases) {
 		lines.push(`### ${item.name}`);
 		lines.push(`- Score: ${item.score}/${item.maxScore}`);

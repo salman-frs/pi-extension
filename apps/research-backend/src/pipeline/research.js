@@ -5,10 +5,12 @@ import { fetchDirect } from "../adapters/extraction/direct.js";
 import { extractStructuredContent } from "../adapters/extraction/structured.js";
 import { classifyFetchError } from "../errors.js";
 import { stableCacheKey } from "../lib/cache.js";
+import { summarizeTrace, traceStep } from "../lib/tracing.js";
 import { buildQueryPlan } from "../query-planner.js";
 import { bestSentences, cleanupWhitespace, extractCallouts, extractCanonicalUrl, extractCodeBlocks, extractHeadings, extractTitle, htmlToText, splitSentences, topKeywords } from "../lib/text.js";
 import { clip, comparableUrlKey, domainMatches, hostnameFromUrl } from "../lib/utils.js";
 import { detectDisagreementSignals, rankFetchedSources, rankSearchResults, summarizeSourceCategories, summarizeSourceTypes } from "../ranking.js";
+import { resolveCanonicalSearchResults } from "../canonical-resolver.js";
 import { buildTrustSignals, classifySourceCategory, inferSourceType, isAuthoritativeCategory } from "../source-quality.js";
 
 export async function searchWorkflow(config, params, helpers) {
@@ -30,28 +32,34 @@ export async function searchWorkflow(config, params, helpers) {
 		"search",
 		key,
 		config.searchCacheTtlMs,
-		async () => {
+		async () => traceStep(helpers, "search.workflow", { query: params.query, sourceType: params.sourceType }, async () => {
 			const providerResults = [];
 			const providerErrors = [];
 			const diagnostics = { plan, providers: [] };
 
-			const searx = await searchSearxng(config, params, plan, helpers.fetchWithTimeout, helpers.logger, helpers.requestId);
+			const searx = await traceStep(helpers, "search.provider.searxng", { queryCount: plan.variants?.length || 0 }, () => searchSearxng(config, params, plan, helpers.fetchWithTimeout, helpers.logger, helpers.requestId, helpers.telemetry, helpers.trace));
 			providerResults.push(...searx.results);
 			providerErrors.push(...(searx.errors || []));
 			diagnostics.providers.push({ name: "searxng", status: searx.status, diagnostics: searx.diagnostics });
 
 			if (shouldUseGitHubSupplement(plan, params)) {
-				const github = await searchGitHubWeb(config, params, plan, helpers.fetchWithTimeout, helpers.logger, helpers.requestId);
+				const githubStartedAt = Date.now();
+				const github = await traceStep(helpers, "search.provider.github", { intent: plan.intent }, () => searchGitHubWeb(config, params, plan, helpers.fetchWithTimeout, helpers.logger, helpers.requestId));
 				providerResults.push(...github.results);
 				providerErrors.push(...(github.errors || []));
 				diagnostics.providers.push({ name: "github-web", status: github.status, diagnostics: github.diagnostics });
+				helpers.telemetry?.recordProviderResult?.("github-web", { ok: github.status !== "failure", status: github.status, latencyMs: Date.now() - githubStartedAt, error: github.errors?.[0]?.message });
 			}
 
-			const ranked = rankSearchResults(providerResults, { ...params, constraintProfile: plan.constraintProfile }).slice(0, params.maxResults || 8);
+			const ranked = resolveCanonicalSearchResults(
+				rankSearchResults(providerResults, { ...params, constraintProfile: plan.constraintProfile }).slice(0, params.maxResults || 8),
+				{ ...params, constraintProfile: plan.constraintProfile },
+			);
 			const successProviders = diagnostics.providers.filter((item) => item.status === "success" || item.status === "partial_success").length;
 			const status = ranked.length === 0
 				? (providerErrors.length > 0 ? "failure" : "no_results")
 				: (providerErrors.length > 0 ? "partial_success" : "success");
+			helpers.telemetry?.addEvent?.(helpers.trace, "search.completed", { status, resultCount: ranked.length, successProviders });
 			return {
 				status,
 				results: ranked,
@@ -61,8 +69,11 @@ export async function searchWorkflow(config, params, helpers) {
 					successProviders,
 				},
 			};
-		},
+		}),
 	);
+	if (value.status === "failure") {
+		helpers.cache?.delete?.("search", key);
+	}
 	helpers.logger?.info("search.completed", {
 		requestId: helpers.requestId,
 		query: params.query,
@@ -90,7 +101,7 @@ export async function fetchWorkflow(config, params, helpers) {
 	const renderedKey = stableCacheKey({ url: params.url, mode: "rendered", extractionProfile: params.extractionProfile });
 	const startedAt = Date.now();
 
-	const directMemo = async () => {
+	const directMemo = async () => traceStep(helpers, "fetch.direct", { url: params.url, extractionProfile: params.extractionProfile }, async () => {
 		const direct = await fetchDirect(config, params.url, params.extractionProfile, helpers.fetchWithTimeout, params.signal);
 		const content = clip(direct.text, 16000);
 		const extractionConfidence = direct.metadata?.extractionConfidence || inferExtractionConfidence(content);
@@ -121,7 +132,7 @@ export async function fetchWorkflow(config, params, helpers) {
 				diagnostics: direct.metadata?.diagnostics,
 			},
 		};
-	};
+	});
 
 	if (params.mode === "rendered") {
 		const rendered = await fetchRenderedWorkflow(config, params, helpers, renderedKey);
@@ -186,11 +197,11 @@ export async function researchWorkflow(config, params, helpers) {
 	});
 	const startedAt = Date.now();
 	const questionPlan = buildQueryPlan({ query: params.question, mode: params.mode, preferredDomains: params.preferredDomains || [] });
-	const { value, cache } = await memo(helpers, "research", key, config.researchCacheTtlMs, async () => {
+	const { value, cache } = await memo(helpers, "research", key, config.researchCacheTtlMs, async () => traceStep(helpers, "research.workflow", { question: params.question, mode: params.mode }, async () => {
 		let search;
 		const failures = [];
 		try {
-			search = await performResearchDiscovery(config, params, questionPlan, helpers);
+			search = await traceStep(helpers, "research.discovery", { question: params.question }, () => performResearchDiscovery(config, params, questionPlan, helpers));
 		} catch (error) {
 			failures.push(normalizeFailure("discovery", error, { question: params.question }));
 			search = { status: "failure", results: [], errors: failures, diagnostics: { plan: questionPlan, searches: [] } };
@@ -205,10 +216,11 @@ export async function researchWorkflow(config, params, helpers) {
 					extractionProfile: modeToProfile(params.mode),
 					signal: params.signal,
 				}, helpers);
+				const identity = chooseFetchedSourceIdentity(candidate, page);
 				fetched.push({
-					title: page.title || candidate.title,
-					url: page.canonicalUrl || candidate.url,
-					domain: hostnameFromUrl(page.canonicalUrl || candidate.url),
+					title: identity.title,
+					url: identity.url,
+					domain: hostnameFromUrl(identity.url),
 					sourceType: candidate.sourceType || inferSourceType(candidate.url),
 					sourceCategory: candidate.sourceCategory || classifySourceCategory(candidate),
 					resultType: candidate.resultType,
@@ -219,7 +231,7 @@ export async function researchWorkflow(config, params, helpers) {
 					fetchStrategy: page.metadata?.strategy,
 					trustSignals: {
 						...buildTrustSignals({
-							url: page.canonicalUrl || candidate.url,
+							url: identity.url,
 							sourceCategory: candidate.sourceCategory || classifySourceCategory(candidate),
 							publishedAt: candidate.publishedAt,
 						}),
@@ -266,6 +278,9 @@ export async function researchWorkflow(config, params, helpers) {
 		const tradeOffs = buildTradeOffs(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile);
 		const risks = buildRisks(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile);
 		const mitigations = buildMitigations(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile);
+		const selectionRationale = buildSelectionRationale(selection, ranked, questionPlan.constraintProfile);
+		const confidenceRationale = buildConfidenceRationale(confidence, ranked, questionPlan.constraintProfile, [...(search.errors || []), ...failures]);
+		const freshnessRationale = buildFreshnessRationale(ranked, params.freshness, questionPlan.constraintProfile);
 		const gaps = buildGaps(ranked, confidence, questionPlan.constraintProfile, [...(search.errors || []), ...failures]);
 		const status =
 			search.status === "failure" && ranked.length === 0
@@ -273,6 +288,7 @@ export async function researchWorkflow(config, params, helpers) {
 				: search.status === "no_results" && ranked.length === 0
 					? "no_results"
 					: ((search.errors?.length || failures.length) ? "partial_success" : "success");
+		helpers.telemetry?.addEvent?.(helpers.trace, "research.synthesis", { status, sourceCount: ranked.length, confidence });
 		return {
 			status,
 			answer: buildAnswer({ ...params, question: questionPlan.searchQuery || params.question }, ranked, agreements, disagreements, questionPlan.constraintProfile),
@@ -283,6 +299,9 @@ export async function researchWorkflow(config, params, helpers) {
 			tradeOffs,
 			risks,
 			mitigations,
+			selectionRationale,
+			confidenceRationale,
+			freshnessRationale,
 			agreements,
 			disagreements,
 			sources: ranked,
@@ -302,9 +321,17 @@ export async function researchWorkflow(config, params, helpers) {
 				selection,
 				queryPlan: questionPlan,
 				partialResult: status === "partial_success",
+				rationales: {
+					selection: selectionRationale,
+					confidence: confidenceRationale,
+					freshness: freshnessRationale,
+				},
 			},
 		};
-	});
+	}));
+	if (value.status === "failure") {
+		helpers.cache?.delete?.("research", key);
+	}
 	helpers.logger?.info("research.completed", {
 		requestId: helpers.requestId,
 		question: params.question,
@@ -327,7 +354,7 @@ export async function researchWorkflow(config, params, helpers) {
 }
 
 async function fetchRenderedWorkflow(config, params, helpers, renderedKey) {
-	const { value, cache } = await memo(helpers, "rendered-fetch", renderedKey, config.renderedFetchCacheTtlMs, async () => {
+	const { value, cache } = await memo(helpers, "rendered-fetch", renderedKey, config.renderedFetchCacheTtlMs, async () => traceStep(helpers, "fetch.rendered", { url: params.url, extractionProfile: params.extractionProfile }, async () => {
 		const rendered = await fetchRenderedPage(config, params.url);
 		const structured = config.structuredExtractionEnabled ? extractStructuredContent(rendered.html, { url: params.url, extractionProfile: params.extractionProfile, variant: "rendered" }) : undefined;
 		const content = clip(structured?.content || htmlToText(rendered.html), 16000);
@@ -349,7 +376,7 @@ async function fetchRenderedWorkflow(config, params, helpers, renderedKey) {
 				diagnostics: structured?.diagnostics,
 			},
 		};
-	});
+	}));
 	return withFetchMetadata(value, { cache, trace: buildTrace(helpers) });
 }
 
@@ -379,6 +406,41 @@ function buildSummary(params, sources, sourceTypes, sourceCategories, keywords, 
 		sourceCategories.length > 0 ? `Source categories: ${sourceCategories.join(", ")}.` : undefined,
 		keywords.length > 0 ? `Dominant themes detected: ${keywords.join(", ")}.` : undefined,
 		params.sourcePolicy ? `Source policy guidance applied: ${params.sourcePolicy}.` : undefined,
+	].filter(Boolean).join(" ");
+}
+
+function buildSelectionRationale(selection, sources, constraintProfile) {
+	if (!sources?.length) return "No source selection rationale is available because no sources were selected.";
+	const anchor = selection?.anchorTitle || sources[0]?.title || sources[0]?.url;
+	const exactCoverage = (constraintProfile?.exactTerms || []).length === 0 || sources.some((source) => exactTermsMatchSource(source, constraintProfile?.exactTerms || []));
+	return [
+		anchor ? `Anchor chosen: ${anchor}.` : undefined,
+		selection?.anchorType ? `Anchor type: ${selection.anchorType}.` : undefined,
+		selection?.anchorDomain ? `Anchor domain: ${selection.anchorDomain}.` : undefined,
+		exactCoverage ? "The selected bundle covers the strongest exact identifiers or canonical hints found in the query." : "The bundle is useful, but exact identifier coverage is incomplete.",
+	].filter(Boolean).join(" ");
+}
+
+function buildConfidenceRationale(confidence, sources, constraintProfile, failures) {
+	if (!sources?.length) return "Confidence is low because no usable evidence was retrieved.";
+	const authoritativeCount = sources.filter((source) => isAuthoritativeCategory(source.sourceCategory)).length;
+	const domainCount = new Set(sources.map((source) => source.domain).filter(Boolean)).size;
+	return [
+		`Confidence is ${confidence} based on ${sources.length} selected source(s), ${authoritativeCount} authoritative source(s), and ${domainCount} distinct domain(s).`,
+		(constraintProfile?.exactTerms || []).length > 0 ? (sources.some((source) => exactTermsMatchSource(source, constraintProfile.exactTerms)) ? "At least one selected source matches the strongest exact technical identifier from the query." : "No selected source matched the strongest exact technical identifier from the query.") : undefined,
+		(failures || []).length > 0 ? `${failures.length} upstream search or fetch failure(s) reduced confidence.` : undefined,
+	].filter(Boolean).join(" ");
+}
+
+function buildFreshnessRationale(sources, freshness, constraintProfile) {
+	if (!sources?.length) return "No freshness rationale is available because no sources were selected.";
+	const dated = sources.filter((source) => source.publishedAt);
+	if (dated.length === 0) return `Freshness preference was ${freshness}, but the selected sources did not expose reliable publish timestamps.`;
+	const newest = [...dated].sort((a, b) => Date.parse(b.publishedAt || "") - Date.parse(a.publishedAt || ""))[0];
+	return [
+		`Freshness preference: ${freshness}.`,
+		newest?.publishedAt ? `Newest dated evidence in the selected set: ${newest.publishedAt}.` : undefined,
+		["release", "migration", "technical-change"].includes(constraintProfile?.queryMode) ? "Recency was weighted more heavily because the task looks change-sensitive." : undefined,
 	].filter(Boolean).join(" ");
 }
 
@@ -739,6 +801,8 @@ function selectResearchSources(candidates, maxSources, constraintProfile) {
 		sources: selected.slice(0, maxSources),
 		anchorUrl: anchor?.url,
 		anchorTitle: anchor?.title,
+		anchorType: anchor?.resultType,
+		anchorDomain: anchor?.domain,
 		reasons: selectionReasons,
 	};
 }
@@ -911,8 +975,50 @@ function withFetchMetadata(result, extra) {
 	};
 }
 
+function chooseFetchedSourceIdentity(candidate, page) {
+	const fetchedUrl = page?.canonicalUrl || candidate?.url;
+	const candidateUrl = candidate?.url;
+	const keepCandidateUrl = shouldPreferCandidateUrl(candidateUrl, fetchedUrl);
+	const url = keepCandidateUrl ? candidateUrl : (fetchedUrl || candidateUrl);
+	const fetchedTitle = String(page?.title || "").trim();
+	const candidateTitle = String(candidate?.title || "").trim();
+	const keepCandidateTitle = shouldPreferCandidateTitle(candidateTitle, fetchedTitle, candidate, page, keepCandidateUrl);
+	return {
+		title: keepCandidateTitle ? (candidateTitle || fetchedTitle) : (fetchedTitle || candidateTitle),
+		url,
+	};
+}
+
+function shouldPreferCandidateUrl(candidateUrl, fetchedUrl) {
+	if (!candidateUrl || !fetchedUrl) return false;
+	if (comparableUrlKey(candidateUrl) === comparableUrlKey(fetchedUrl)) return false;
+	const candidateHost = hostnameFromUrl(candidateUrl);
+	const fetchedHost = hostnameFromUrl(fetchedUrl);
+	if (candidateHost && fetchedHost && candidateHost !== fetchedHost) return false;
+	return urlSpecificity(candidateUrl) > urlSpecificity(fetchedUrl) + 1;
+}
+
+function shouldPreferCandidateTitle(candidateTitle, fetchedTitle, candidate, page, keepCandidateUrl) {
+	if (!candidateTitle) return false;
+	if (!fetchedTitle) return true;
+	if (keepCandidateUrl) return true;
+	const fetchedGeneric = /^(next\.js|react|documentation|docs|reference overview)$/i.test(fetchedTitle) || fetchedTitle.split(/\s+/).length <= 2;
+	const candidateSpecific = candidateTitle.length > fetchedTitle.length || /proxyclientmaxbodysize|configuration|reference|guide|release|upgrade|migration/i.test(candidateTitle);
+	const pageUrl = page?.canonicalUrl || candidate?.url;
+	return fetchedGeneric && candidateSpecific && urlSpecificity(candidate?.url) >= urlSpecificity(pageUrl);
+}
+
+function urlSpecificity(url) {
+	try {
+		const parsed = new URL(url);
+		return parsed.pathname.split("/").filter(Boolean).length;
+	} catch {
+		return 0;
+	}
+}
+
 function buildTrace(helpers) {
-	return { requestId: helpers.requestId };
+	return summarizeTrace(helpers.trace) || { requestId: helpers.requestId };
 }
 
 function normalizeFailure(stage, error, context = {}) {

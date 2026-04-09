@@ -4,6 +4,7 @@ import { decorateMetadata, buildAnalyzeResponseSections, buildResearchResponseSe
 import { createCacheStore } from "./lib/cache.js";
 import { errorResponse, json, methodNotAllowed, notFound, readJsonBody, unauthorized } from "./lib/http.js";
 import { createLogger, nextRequestId } from "./lib/logger.js";
+import { createTelemetry } from "./lib/tracing.js";
 import { nowIso } from "./lib/utils.js";
 import { analyzeWorkflow } from "./pipeline/analyze.js";
 import { fetchWorkflow, researchWorkflow, searchWorkflow } from "./pipeline/research.js";
@@ -11,16 +12,19 @@ import { fetchWorkflow, researchWorkflow, searchWorkflow } from "./pipeline/rese
 const config = loadConfig();
 const cache = createCacheStore(config);
 const logger = createLogger(config);
+const telemetry = createTelemetry(config);
 
 const server = http.createServer(async (req, res) => {
 	const requestId = nextRequestId();
 	const requestStartedAt = Date.now();
 	const baseHeaders = { "x-request-id": requestId };
+	let trace;
 	try {
 		if (!req.url) return notFound(res, baseHeaders);
 		if (req.method === "OPTIONS") return json(res, 200, { ok: true }, baseHeaders);
 
 		const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+		trace = telemetry.startRequest({ requestId, method: req.method, path: url.pathname });
 		logger.info("request.started", {
 			requestId,
 			method: req.method,
@@ -40,8 +44,12 @@ const server = http.createServer(async (req, res) => {
 					maxFetchedSources: config.maxFetchedSources,
 					cacheEnabled: config.cacheEnabled,
 					telemetryEnabled: config.telemetryEnabled,
+					traceMode: config.traceMode,
+					researchProfile: config.researchProfile,
+					providerCircuitBreakerEnabled: config.providerCircuitBreakerEnabled,
 				},
 				cache: cache.stats(),
+				telemetry: telemetry.getSummary(),
 			}, baseHeaders);
 		}
 
@@ -50,9 +58,31 @@ const server = http.createServer(async (req, res) => {
 			return unauthorized(res, baseHeaders);
 		}
 
+		if (req.method === "GET" && url.pathname === "/debug/traces") {
+			return json(res, 200, {
+				ok: true,
+				traces: telemetry.getRecentTraces(Number(url.searchParams.get("limit") || 20)),
+			}, baseHeaders);
+		}
+
+		if (req.method === "GET" && url.pathname === "/debug/metrics") {
+			return json(res, 200, {
+				ok: true,
+				metrics: telemetry.getMetrics(),
+				providers: telemetry.getProviderHealth(),
+			}, baseHeaders);
+		}
+
+		if (req.method === "GET" && url.pathname === "/debug/providers") {
+			return json(res, 200, {
+				ok: true,
+				providers: telemetry.getProviderHealth(),
+			}, baseHeaders);
+		}
+
 		if (req.method !== "POST") return methodNotAllowed(res, ["GET", "POST", "OPTIONS"], baseHeaders);
 		const body = await readJsonBody(req);
-		const helpers = { fetchWithTimeout, cache, logger, requestId };
+		const helpers = { fetchWithTimeout, cache, logger, telemetry, requestId, trace };
 
 		if (url.pathname === "/v1/search") {
 			const result = await searchWorkflow(config, {
@@ -144,8 +174,19 @@ const server = http.createServer(async (req, res) => {
 			error,
 			durationMs: Date.now() - requestStartedAt,
 		});
+		telemetry.finishRequest(trace, {
+			status: "failure",
+			statusCode: 500,
+			error: error instanceof Error ? error.message : String(error),
+		});
 		return errorResponse(res, error, baseHeaders);
 	} finally {
+		if (trace?.status === "running") {
+			telemetry.finishRequest(trace, {
+				status: classifyRequestStatus(res.statusCode),
+				statusCode: res.statusCode,
+			});
+		}
 		logger.info("request.finished", {
 			requestId,
 			durationMs: Date.now() - requestStartedAt,
@@ -186,4 +227,10 @@ function isAuthorized(config, req) {
 	if (!config.apiKey) return true;
 	const header = String(req.headers.authorization || "");
 	return header === `Bearer ${config.apiKey}`;
+}
+
+function classifyRequestStatus(statusCode) {
+	if (statusCode >= 500) return "failure";
+	if (statusCode >= 400) return "partial_success";
+	return "success";
 }

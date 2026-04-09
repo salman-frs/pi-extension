@@ -1,6 +1,7 @@
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import {
 	DEFAULT_MAX_BYTES,
@@ -20,6 +21,7 @@ const DIRECT_FETCH_MAX_CHARS = 12_000;
 const DEFAULT_LOCAL_RESEARCH_BASE_URL = "http://127.0.0.1:8787";
 const PROJECT_CONFIG_PATH = join(process.cwd(), ".pi", "web-research.json");
 const GLOBAL_CONFIG_PATH = join(homedir(), ".pi", "agent", "web-research.json");
+const PROJECT_ENV = loadProjectEnvFile(resolve(process.cwd(), ".env"));
 
 type Freshness = "any" | "day" | "week" | "month" | "year";
 type SourceType = "general" | "news" | "docs" | "github";
@@ -50,6 +52,19 @@ interface ResearchConfig {
 	autoLocal: boolean;
 	source: ConfigSource;
 	configPath?: string;
+}
+
+interface ResearchHealth {
+	ok: boolean;
+	message: string;
+	backendDiscovery?: "enabled" | "disabled";
+	backendConfig?: {
+		playwrightEnabled?: boolean;
+		structuredExtractionEnabled?: boolean;
+	};
+	backendProfile?: string;
+	providerSummary?: string;
+	traceMode?: string;
 }
 
 interface SearchResult {
@@ -103,6 +118,9 @@ interface ResearchOutput {
 	tradeOffs?: string[];
 	risks?: string[];
 	mitigations?: string[];
+	selectionRationale?: string;
+	confidenceRationale?: string;
+	freshnessRationale?: string;
 	agreements?: string[];
 	disagreements?: string[];
 	sources?: ResearchSource[];
@@ -340,20 +358,20 @@ async function getConfig(): Promise<ResearchConfig> {
 	const globalConfig = projectConfig ? undefined : await readStoredConfig(GLOBAL_CONFIG_PATH);
 	const storedConfig = projectConfig ?? globalConfig ?? {};
 	const envConfigured = [
-		process.env.PI_RESEARCH_BASE_URL,
-		process.env.PI_RESEARCH_API_KEY,
-		process.env.PI_RESEARCH_SEARXNG_URL,
-		process.env.PI_RESEARCH_TIMEOUT_MS,
-		process.env.PI_RESEARCH_USER_AGENT,
-		process.env.PI_RESEARCH_AUTO_LOCAL,
+		envValue("PI_RESEARCH_BASE_URL"),
+		envValue("PI_RESEARCH_API_KEY") ?? envValue("RESEARCH_API_KEY"),
+		envValue("PI_RESEARCH_SEARXNG_URL"),
+		envValue("PI_RESEARCH_TIMEOUT_MS"),
+		envValue("PI_RESEARCH_USER_AGENT"),
+		envValue("PI_RESEARCH_AUTO_LOCAL"),
 	].some((value) => trimToUndefined(value) != null);
-	const autoLocal = parseBoolean(process.env.PI_RESEARCH_AUTO_LOCAL, storedConfig.autoLocal ?? true);
-	const configuredBaseUrl = trimToUndefined(process.env.PI_RESEARCH_BASE_URL) ?? trimToUndefined(storedConfig.baseUrl);
+	const autoLocal = parseBoolean(envValue("PI_RESEARCH_AUTO_LOCAL"), storedConfig.autoLocal ?? true);
+	const configuredBaseUrl = trimToUndefined(envValue("PI_RESEARCH_BASE_URL")) ?? trimToUndefined(storedConfig.baseUrl);
 	const baseUrl = configuredBaseUrl ?? (autoLocal ? DEFAULT_LOCAL_RESEARCH_BASE_URL : undefined);
-	const apiKey = trimToUndefined(process.env.PI_RESEARCH_API_KEY) ?? trimToUndefined(storedConfig.apiKey);
-	const searxngUrl = trimToUndefined(process.env.PI_RESEARCH_SEARXNG_URL) ?? trimToUndefined(storedConfig.searxngUrl);
-	const timeoutMs = parsePositiveInt(process.env.PI_RESEARCH_TIMEOUT_MS) ?? storedConfig.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-	const userAgent = trimToUndefined(process.env.PI_RESEARCH_USER_AGENT) ?? trimToUndefined(storedConfig.userAgent) ?? `${EXTENSION_NAME}/0.1`;
+	const apiKey = trimToUndefined(envValue("PI_RESEARCH_API_KEY")) ?? trimToUndefined(envValue("RESEARCH_API_KEY")) ?? trimToUndefined(storedConfig.apiKey);
+	const searxngUrl = trimToUndefined(envValue("PI_RESEARCH_SEARXNG_URL")) ?? trimToUndefined(storedConfig.searxngUrl);
+	const timeoutMs = parsePositiveInt(envValue("PI_RESEARCH_TIMEOUT_MS")) ?? storedConfig.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+	const userAgent = trimToUndefined(envValue("PI_RESEARCH_USER_AGENT")) ?? trimToUndefined(storedConfig.userAgent) ?? `${EXTENSION_NAME}/0.3.0`;
 	const source: ConfigSource = envConfigured
 		? "env"
 		: projectConfig
@@ -437,7 +455,7 @@ async function showResearchStatus(ctx) {
 	const config = await refreshResearchStatus(ctx);
 	const health = await healthCheck(config);
 	ctx.ui.notify([
-		configSummary(config),
+		configSummary(config, health),
 		`health: ${health.ok ? "ok" : "failed"}`,
 		`healthDetail: ${health.message}`,
 	].join("\n"), health.ok ? "info" : "error");
@@ -572,19 +590,55 @@ function statusText(config: ResearchConfig): string {
 	return "research: fetch-only";
 }
 
-function configSummary(config: ResearchConfig): string {
+function envValue(name: string): string | undefined {
+	return trimToUndefined(process.env[name]) ?? trimToUndefined(PROJECT_ENV[name]);
+}
+
+function loadProjectEnvFile(path: string): Record<string, string> {
+	if (!existsSync(path)) return {};
+	try {
+		const raw = readFileSync(path, "utf8");
+		const values: Record<string, string> = {};
+		for (const line of raw.split(/\r?\n/)) {
+			const trimmed = line.trim();
+			if (!trimmed || trimmed.startsWith("#")) continue;
+			const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+			if (!match) continue;
+			const [, key, value] = match;
+			values[key] = stripEnvQuotes(value);
+		}
+		return values;
+	} catch {
+		return {};
+	}
+}
+
+function stripEnvQuotes(value: string): string {
+	const trimmed = String(value || "").trim();
+	if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+		return trimmed.slice(1, -1);
+	}
+	return trimmed;
+}
+
+function configSummary(config: ResearchConfig, health?: ResearchHealth): string {
 	return [
 		`mode: ${config.baseUrl ? "backend" : config.searxngUrl ? "direct" : "fetch-only"}`,
 		`source: ${config.source}${config.configPath ? ` (${config.configPath})` : ""}`,
 		`backend: ${config.baseUrl ?? "not set"}`,
-		`searxng: ${config.searxngUrl ?? "not set"}`,
+		`directSearchFallback: ${config.searxngUrl ?? "not set"}`,
+		health?.backendDiscovery ? `backendDiscovery: ${health.backendDiscovery}` : undefined,
+		health?.backendConfig ? `backendFeatures: structured=${health.backendConfig.structuredExtractionEnabled ? "on" : "off"}, rendered=${health.backendConfig.playwrightEnabled ? "on" : "off"}` : undefined,
+		health?.backendProfile ? `backendProfile: ${health.backendProfile}` : undefined,
+		health?.traceMode ? `traceMode: ${health.traceMode}` : undefined,
+		health?.providerSummary ? `providers: ${health.providerSummary}` : undefined,
 		`timeoutMs: ${config.timeoutMs}`,
 		`autoLocal: ${config.autoLocal ? "enabled" : "disabled"}`,
 		`apiKey: ${config.apiKey ? "set" : "not set"}`,
-	].join(" | ");
+	].filter(Boolean).join(" | ");
 }
 
-async function healthCheck(config: ResearchConfig): Promise<{ ok: boolean; message: string }> {
+async function healthCheck(config: ResearchConfig): Promise<ResearchHealth> {
 	try {
 		if (config.baseUrl) {
 			const res = await fetchWithTimeout(joinUrl(config.baseUrl, "/health"), {
@@ -595,10 +649,25 @@ async function healthCheck(config: ResearchConfig): Promise<{ ok: boolean; messa
 				return { ok: false, message: `backend HTTP ${res.status}` };
 			}
 			const data = await res.json().catch(() => ({} as any));
+			const backendDiscovery = data?.config?.searxngConfigured === false ? "disabled" : "enabled";
+			const backendConfig = {
+				playwrightEnabled: Boolean(data?.config?.playwrightEnabled),
+				structuredExtractionEnabled: Boolean(data?.config?.structuredExtractionEnabled),
+			};
+			const providerSummary = Array.isArray(data?.telemetry?.providerHealth)
+				? data.telemetry.providerHealth.map((item: any) => `${item.provider}:${item.health}`).join(", ")
+				: undefined;
+			const shared = {
+				backendDiscovery,
+				backendConfig,
+				backendProfile: typeof data?.config?.researchProfile === "string" ? data.config.researchProfile : undefined,
+				traceMode: typeof data?.config?.traceMode === "string" ? data.config.traceMode : undefined,
+				providerSummary,
+			};
 			if (data?.config?.searxngConfigured === false) {
-				return { ok: true, message: `backend ${config.baseUrl} (fetch available, search disabled: backend SEARXNG_URL not configured)` };
+				return { ok: true, message: `backend ${config.baseUrl} (fetch available, search disabled: backend discovery is not configured)`, ...shared };
 			}
-			return { ok: true, message: `backend ${config.baseUrl}` };
+			return { ok: true, message: `backend ${config.baseUrl}`, ...shared };
 		}
 		if (config.searxngUrl) {
 			const url = new URL(joinUrl(config.searxngUrl, "/search"));
@@ -1112,6 +1181,9 @@ function normalizeResearchOutput(raw: any): ResearchOutput {
 		tradeOffs: arrayOfStrings(raw?.tradeOffs) ?? arrayOfStrings(raw?.trade_offs),
 		risks: arrayOfStrings(raw?.risks),
 		mitigations: arrayOfStrings(raw?.mitigations),
+		selectionRationale: stringify(raw?.selectionRationale),
+		confidenceRationale: stringify(raw?.confidenceRationale),
+		freshnessRationale: stringify(raw?.freshnessRationale),
 		agreements: arrayOfStrings(raw?.agreements),
 		disagreements: arrayOfStrings(raw?.disagreements),
 		sources: normalizeResearchSources(raw?.sources ?? raw?.citations),
@@ -1281,6 +1353,7 @@ function renderSearchResults(query: string, results: SearchResult[]): string {
 		if (typeof result.score === "number") lines.push(`   Score: ${result.score}`);
 		const trustSummary = summarizeTrustSignals(result.trustSignals);
 		if (trustSummary) lines.push(`   Trust: ${trustSummary}`);
+		if (typeof result.ranking?.explanation === "string") lines.push(`   Why ranked: ${String(result.ranking.explanation)}`);
 		if (result.publishedAt) lines.push(`   Published: ${result.publishedAt}`);
 		if (result.snippet) lines.push(`   Snippet: ${result.snippet}`);
 		lines.push("");
@@ -1357,6 +1430,21 @@ function renderResearchOutput(question: string, result: ResearchOutput): string 
 	if (result.mitigations?.length) {
 		lines.push("Mitigations:");
 		for (const item of result.mitigations) lines.push(`- ${item}`);
+		lines.push("");
+	}
+	if (result.selectionRationale) {
+		lines.push("Selection rationale:");
+		lines.push(result.selectionRationale);
+		lines.push("");
+	}
+	if (result.confidenceRationale) {
+		lines.push("Confidence rationale:");
+		lines.push(result.confidenceRationale);
+		lines.push("");
+	}
+	if (result.freshnessRationale) {
+		lines.push("Freshness rationale:");
+		lines.push(result.freshnessRationale);
 		lines.push("");
 	}
 	if (result.agreements?.length) {

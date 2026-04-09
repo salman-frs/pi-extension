@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { annotateBenchmarkCases, renderBenchmarkMappingSection, summarizeBenchmarkFamilies } from "./lib/benchmark-reporting.mjs";
+import { annotateBenchmarkCases, renderBenchmarkMappingSection, renderFailureBucketSection, summarizeBenchmarkFamilies, summarizeFailureBuckets, summarizeStability } from "./lib/benchmark-reporting.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(SCRIPT_DIR, "..");
@@ -19,6 +19,7 @@ const ports = {
 const contentBase = `http://127.0.0.1:${ports.content}`;
 const searchBase = `http://127.0.0.1:${ports.search}`;
 const backendBase = `http://127.0.0.1:${ports.backend}`;
+const AGENT_BENCHMARK_RUNS = Math.max(1, Number(process.env.PI_AGENT_BENCHMARK_RUNS || 1));
 
 const pageFixtures = {
 	"/react-cache-official": {
@@ -401,39 +402,49 @@ async function main() {
 			},
 		];
 
-		const cases = [];
-		for (const task of tasks) {
-			console.log(`Running agent task benchmark: ${task.name}`);
-			const output = await runAgentTask(task);
-			const checks = task.evaluate(output);
-			cases.push(makeCase(task.name, task.maxScore, checks, {
-				toolNames: output.toolNames,
-				finalText: output.finalText,
-			}));
+		const runReports = [];
+		for (let runIndex = 1; runIndex <= AGENT_BENCHMARK_RUNS; runIndex += 1) {
+			const cases = [];
+			for (const task of tasks) {
+				console.log(`Running agent task benchmark [run ${runIndex}/${AGENT_BENCHMARK_RUNS}]: ${task.name}`);
+				const output = await runAgentTask(task);
+				const checks = task.evaluate(output);
+				cases.push(makeCase(task.name, task.maxScore, checks, {
+					toolNames: output.toolNames,
+					finalText: output.finalText,
+				}));
+			}
+			const annotatedCases = annotateBenchmarkCases("agent", cases);
+			const totalScore = annotatedCases.reduce((sum, item) => sum + item.score, 0);
+			const totalMaxScore = annotatedCases.reduce((sum, item) => sum + item.maxScore, 0);
+			const percentage = Math.round((totalScore / totalMaxScore) * 100);
+			runReports.push({ runIndex, totalScore, totalMaxScore, percentage, cases: annotatedCases });
 		}
 
-		const annotatedCases = annotateBenchmarkCases("agent", cases);
-		const totalScore = annotatedCases.reduce((sum, item) => sum + item.score, 0);
-		const totalMaxScore = annotatedCases.reduce((sum, item) => sum + item.maxScore, 0);
-		const percentage = Math.round((totalScore / totalMaxScore) * 100);
-		const benchmarkFamilies = summarizeBenchmarkFamilies(annotatedCases);
+		const latestRun = runReports[runReports.length - 1];
+		const benchmarkFamilies = summarizeBenchmarkFamilies(latestRun.cases);
+		const failureBuckets = summarizeFailureBuckets(latestRun.cases);
+		const stability = summarizeStability(runReports);
 		const report = {
-			ok: percentage >= 85,
-			totalScore,
-			totalMaxScore,
-			percentage,
+			ok: latestRun.percentage >= 85,
+			totalScore: latestRun.totalScore,
+			totalMaxScore: latestRun.totalMaxScore,
+			percentage: latestRun.percentage,
 			generatedAt: new Date().toISOString(),
 			mode: "pi-agent-task",
 			benchmarkFamilies,
-			cases: annotatedCases,
+			failureBuckets,
+			stability,
+			runs: runReports.map((item) => ({ runIndex: item.runIndex, totalScore: item.totalScore, totalMaxScore: item.totalMaxScore, percentage: item.percentage })),
+			cases: latestRun.cases,
 		};
 
 		await mkdir(REPORT_DIR, { recursive: true });
 		await writeFile(resolve(REPORT_DIR, "pi-agent-task-benchmark-latest.json"), JSON.stringify(report, null, 2));
 		await writeFile(resolve(REPORT_DIR, "pi-agent-task-benchmark-latest.md"), renderMarkdownReport(report));
 
-		console.log(`PI AGENT BENCHMARK: ${totalScore}/${totalMaxScore} (${percentage}%)`);
-		for (const item of cases) {
+		console.log(`PI AGENT BENCHMARK: ${report.totalScore}/${report.totalMaxScore} (${report.percentage}%) [runs=${AGENT_BENCHMARK_RUNS}]`);
+		for (const item of latestRun.cases) {
 			console.log(`- ${item.name}: ${item.score}/${item.maxScore}`);
 		}
 		console.log(`Report: ${resolve(REPORT_DIR, "pi-agent-task-benchmark-latest.json")}`);
@@ -461,6 +472,16 @@ function renderMarkdownReport(report) {
 		"",
 	];
 	lines.push(renderBenchmarkMappingSection(report));
+	lines.push(renderFailureBucketSection(report));
+	if (report.stability) {
+		lines.push("## Stability");
+		lines.push("");
+		lines.push(`- Runs: ${report.stability.runs}`);
+		lines.push(`- Average: ${report.stability.avg}%`);
+		lines.push(`- Min/Max: ${report.stability.min}% / ${report.stability.max}%`);
+		lines.push(`- Spread: ${report.stability.spread}%`);
+		lines.push("");
+	}
 	for (const item of report.cases) {
 		lines.push(`### ${item.name}`);
 		lines.push(`- Score: ${item.score}/${item.maxScore}`);

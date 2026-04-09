@@ -518,6 +518,7 @@ engines:
     # add "list" to the array to get results in the results list
     display_type: ["infobox"]
     categories: [general]
+    disabled: true
 
   - name: bilibili
     engine: bilibili
@@ -807,28 +808,33 @@ engines:
     # add "list" to the array to get results in the results list
     display_type: ["infobox"]
     categories: [general]
+    disabled: true
 
   - name: duckduckgo
     engine: duckduckgo
     shortcut: ddg
+    disabled: true
 
   - name: duckduckgo images
     engine: duckduckgo_extra
     categories: [images]
     ddg_category: images
     shortcut: ddi
+    disabled: true
 
   - name: duckduckgo videos
     engine: duckduckgo_extra
     categories: [videos]
     ddg_category: videos
     shortcut: ddv
+    disabled: true
 
   - name: duckduckgo news
     engine: duckduckgo_extra
     categories: [news]
     ddg_category: news
     shortcut: ddn
+    disabled: true
 
   - name: duckduckgo weather
     engine: duckduckgo_weather
@@ -1212,6 +1218,7 @@ engines:
     categories: [general, web]
     search_type: web
     shortcut: ka
+    disabled: true
 
   - name: karmasearch images
     engine: karmasearch
@@ -1219,18 +1226,21 @@ engines:
     search_type: images
     shortcut: kai
     paging: false
+    disabled: true
 
   - name: karmasearch videos
     engine: karmasearch
     categories: [general, web]
     search_type: videos
     shortcut: kav
+    disabled: true
 
   - name: karmasearch news
     engine: karmasearch
     categories: [news, web]
     search_type: news
     shortcut: kan
+    disabled: true
 
   - name: kickass
     engine: kickass
@@ -2001,18 +2011,21 @@ engines:
     shortcut: sp
     startpage_categ: web
     categories: [general, web]
+    disabled: true
 
   - name: startpage news
     engine: startpage
     startpage_categ: news
     categories: [news, web]
     shortcut: spn
+    disabled: true
 
   - name: startpage images
     engine: startpage
     startpage_categ: images
     categories: [images, web]
     shortcut: spi
+    disabled: true
 
   - name: steam
     engine: steam
@@ -2604,6 +2617,7 @@ engines:
     paging: true
     categories: [general, web]
     brave_category: search
+    disabled: true
     # brave_spellcheck: true
 
   - name: brave.images
@@ -2612,6 +2626,7 @@ engines:
     shortcut: brimg
     categories: [images, web]
     brave_category: images
+    disabled: true
 
   - name: brave.videos
     engine: brave
@@ -2619,6 +2634,7 @@ engines:
     shortcut: brvid
     categories: [videos, web]
     brave_category: videos
+    disabled: true
 
   - name: brave.news
     engine: brave
@@ -2626,6 +2642,7 @@ engines:
     shortcut: brnews
     categories: news
     brave_category: news
+    disabled: true
 
   # - name: brave.goggles
   #   engine: brave
