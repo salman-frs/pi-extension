@@ -61,6 +61,26 @@ const pageFixtures = {
 		</article>
 		`,
 	},
+	"/next-proxy-config": {
+		title: "proxyClientMaxBodySize | next.config.js Options | Next.js",
+		body: `
+		<article>
+		<h1>proxyClientMaxBodySize | next.config.js Options | Next.js</h1>
+		<p>The <code>proxyClientMaxBodySize</code> setting controls the maximum buffered request body size when proxying.</p>
+		<p>Use the exact configuration reference page when validating this option.</p>
+		</article>
+		`,
+	},
+	"/next-docs-overview": {
+		title: "Next.js",
+		body: `
+		<article>
+		<h1>Next.js</h1>
+		<p>General framework overview page with broader documentation links.</p>
+		<p>This page is less canonical than the exact configuration reference for a specific option.</p>
+		</article>
+		`,
+	},
 };
 
 function createContentServer() {
@@ -86,7 +106,24 @@ function createFakeSearchServer() {
 		}
 		const q = (url.searchParams.get("q") || "").toLowerCase();
 		let results;
-		if (q.includes("react") || q.includes("caching")) {
+		if (q.includes("proxyclientmaxbodysize")) {
+			results = [
+				{
+					title: "proxyClientMaxBodySize | next.config.js Options | Next.js",
+					url: `${contentBase}/next-proxy-config`,
+					content: "Exact configuration reference for proxyClientMaxBodySize.",
+					publishedDate: "2026-04-07T11:00:00Z",
+					engine: "fixture",
+				},
+				{
+					title: "Next.js",
+					url: `${contentBase}/next-docs-overview`,
+					content: "Generic docs overview that should not outrank the exact configuration reference.",
+					publishedDate: "2026-04-06T10:00:00Z",
+					engine: "fixture",
+				},
+			];
+		} else if (q.includes("react") || q.includes("caching")) {
 			results = [
 				{
 					title: "Official React caching guidance",
@@ -277,6 +314,19 @@ async function main() {
 		assert(typeof research.sources[0].sourceCategory === "string", "research sources should expose categories");
 		assert(typeof research.confidence === "string", "research should produce confidence");
 		assert(Array.isArray(research.retrySuggestions) || Array.isArray(research.failures) || research.status === "success", "research should expose retry/failure info when partial");
+
+		const exactResearch = await postJson(`${backendBase}/v1/research`, {
+			question: "vercel next.js proxyClientMaxBodySize docs",
+			mode: "technical",
+			freshness: "month",
+			numberOfSources: 2,
+			outputDepth: "brief",
+			preferredDomains: ["127.0.0.1"],
+		});
+		assert(/proxyClientMaxBodySize/i.test(exactResearch.sources?.[0]?.title || exactResearch.sources?.[0]?.url || ""), "exact research should anchor on the exact config reference");
+		assert(exactResearch.metadata?.taskProfile === "exact-docs", "exact research should expose exact-docs task profile");
+		assert(exactResearch.metadata?.selection?.canonicalProof?.anchorQuality === "strong", "exact research should expose strong canonical proof");
+		assert((exactResearch.metadata?.traceGrades?.checks || []).some((item) => item.name === "exact-identifier-coverage" && item.pass === true), "exact research trace grades should record exact identifier coverage");
 
 		const analyze = await postJson(`${backendBase}/v1/analyze`, {
 			question: "Compare these caching recommendations",

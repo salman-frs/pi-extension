@@ -104,8 +104,12 @@ Top-level shape:
 Important metadata:
 - `metadata.responseSections`
 - `metadata.selection`
+- `metadata.selection.canonicalProof`
+- `metadata.selection.bundleCoverage`
 - `metadata.queryPlan`
+- `metadata.queryPlan.constraintProfile.taskProfile`
 - `metadata.searchDiagnostics`
+- `metadata.traceGrades`
 - `metadata.partialResult`
 - `metadata.rationales`
 - `metadata.consumerHints`
@@ -114,6 +118,7 @@ Intended use:
 - direct Pi research answers
 - recommendation/context input for higher-level extensions
 - best-practice/trade-off/risk extraction
+- canonical-anchor inspection and downstream quality gating for harder technical tasks
 
 ## Analyze output
 

@@ -371,7 +371,7 @@ async function getConfig(): Promise<ResearchConfig> {
 	const apiKey = trimToUndefined(envValue("PI_RESEARCH_API_KEY")) ?? trimToUndefined(envValue("RESEARCH_API_KEY")) ?? trimToUndefined(storedConfig.apiKey);
 	const searxngUrl = trimToUndefined(envValue("PI_RESEARCH_SEARXNG_URL")) ?? trimToUndefined(storedConfig.searxngUrl);
 	const timeoutMs = parsePositiveInt(envValue("PI_RESEARCH_TIMEOUT_MS")) ?? storedConfig.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-	const userAgent = trimToUndefined(envValue("PI_RESEARCH_USER_AGENT")) ?? trimToUndefined(storedConfig.userAgent) ?? `${EXTENSION_NAME}/0.3.0`;
+	const userAgent = trimToUndefined(envValue("PI_RESEARCH_USER_AGENT")) ?? trimToUndefined(storedConfig.userAgent) ?? `${EXTENSION_NAME}/0.4.0`;
 	const source: ConfigSource = envConfigured
 		? "env"
 		: projectConfig
@@ -1392,6 +1392,25 @@ function renderResearchOutput(question: string, result: ResearchOutput): string 
 		lines.push(`Status: ${result.status}`);
 		lines.push("");
 	}
+	const taskProfile = stringify(result.metadata?.taskProfile);
+	const canonicalProof = isRecord(result.metadata?.selection) && isRecord((result.metadata?.selection as Record<string, unknown>).canonicalProof)
+		? ((result.metadata?.selection as Record<string, unknown>).canonicalProof as Record<string, unknown>)
+		: undefined;
+	const traceGrades = isRecord(result.metadata?.traceGrades) ? result.metadata?.traceGrades as Record<string, unknown> : undefined;
+	if (taskProfile) {
+		lines.push(`Task profile: ${taskProfile}`);
+		lines.push("");
+	}
+	const canonicalSummary = summarizeCanonicalProof(canonicalProof);
+		if (canonicalSummary) {
+		lines.push(`Canonical proof: ${canonicalSummary}`);
+		lines.push("");
+	}
+	const traceGradeSummary = summarizeTraceGrades(traceGrades);
+	if (traceGradeSummary) {
+		lines.push(`Trace grading: ${traceGradeSummary}`);
+		lines.push("");
+	}
 	if (result.answer) {
 		lines.push("Answer:");
 		lines.push(result.answer);
@@ -1567,6 +1586,25 @@ function renderAnalyzeOutput(question: string, comparisonMode: string, result: A
 		for (const gap of result.gaps) lines.push(`- ${gap}`);
 	}
 	return lines.join("\n").trim();
+}
+
+function summarizeCanonicalProof(canonicalProof: Record<string, unknown> | undefined): string | undefined {
+	if (!canonicalProof) return undefined;
+	const parts = [
+		typeof canonicalProof.anchorQuality === "string" ? `quality=${String(canonicalProof.anchorQuality)}` : undefined,
+		canonicalProof.exactMatch === true ? "exact-match" : canonicalProof.exactMatch === false ? "exact-mismatch" : undefined,
+		canonicalProof.strongExactMatch === true ? "strong-exact-match" : undefined,
+		canonicalProof.strongerCanonicalExists === true ? "stronger-candidate-exists" : undefined,
+	].filter(Boolean);
+	return parts.length > 0 ? parts.join(", ") : undefined;
+}
+
+function summarizeTraceGrades(traceGrades: Record<string, unknown> | undefined): string | undefined {
+	if (!traceGrades) return undefined;
+	const checks = Array.isArray(traceGrades.checks) ? traceGrades.checks : [];
+	const failed = checks.filter((item: any) => isRecord(item) && item.pass === false);
+	if (checks.length === 0) return undefined;
+	return failed.length === 0 ? `all ${checks.length} checks passed` : `${failed.length}/${checks.length} checks failed (${failed.map((item: any) => String(item.name || item.category || "unknown")).join(", ")})`;
 }
 
 function summarizeTrustSignals(trustSignals: Record<string, unknown> | undefined): string | undefined {

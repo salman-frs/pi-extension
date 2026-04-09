@@ -6,7 +6,7 @@ export function loadConfig() {
 		maxFetchedSources: parsePositiveInt(process.env.MAX_FETCHED_SOURCES) ?? 6,
 		searxngUrl: trim(process.env.SEARXNG_URL),
 		apiKey: trim(process.env.RESEARCH_API_KEY),
-		userAgent: trim(process.env.USER_AGENT) || "pi-research-backend/0.3.0",
+		userAgent: trim(process.env.USER_AGENT) || "pi-research-backend/0.4.0",
 		browserMode: trim(process.env.BROWSER_MODE) || "auto",
 		playwrightEnabled: parseBoolean(process.env.PLAYWRIGHT_ENABLED, false),
 		structuredExtractionEnabled: parseBoolean(process.env.STRUCTURED_EXTRACTION_ENABLED, true),

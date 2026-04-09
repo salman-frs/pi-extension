@@ -496,6 +496,23 @@ async function runBenchmarks() {
 		sample: exactConfig.results,
 	}));
 
+	const exactConfigResearch = await postJson(`${backendBase}/v1/research`, {
+		question: "vercel next.js proxyClientMaxBodySize docs",
+		mode: "technical",
+		freshness: "month",
+		numberOfSources: 3,
+		outputDepth: "brief",
+		preferredDomains: ["nextjs.org"],
+	});
+	results.push(makeCase("research-exact-config-canonical-proof", 20, [
+		check("top research source is the exact config reference", /proxyClientMaxBodySize/i.test(exactConfigResearch.sources?.[0]?.title || exactConfigResearch.sources?.[0]?.url || ""), 5, JSON.stringify(exactConfigResearch.sources?.[0] || {})),
+		check("task profile is exact-docs", exactConfigResearch.metadata?.taskProfile === "exact-docs", 5, JSON.stringify({ taskProfile: exactConfigResearch.metadata?.taskProfile, selection: exactConfigResearch.metadata?.selection })),
+		check("canonical proof marks anchor as strong", exactConfigResearch.metadata?.selection?.canonicalProof?.anchorQuality === "strong", 5, JSON.stringify(exactConfigResearch.metadata?.selection?.canonicalProof || {})),
+		check("trace grades pass exact identifier coverage", (exactConfigResearch.metadata?.traceGrades?.checks || []).some((item) => item.name === "exact-identifier-coverage" && item.pass === true), 5, JSON.stringify(exactConfigResearch.metadata?.traceGrades || {})),
+	], {
+		sample: { top: exactConfigResearch.sources?.[0], selection: exactConfigResearch.metadata?.selection, traceGrades: exactConfigResearch.metadata?.traceGrades },
+	}));
+
 	const repoSearch = await postJson(`${backendBase}/v1/search`, {
 		query: "astral-sh uv github repo official",
 		freshness: "year",
@@ -595,6 +612,14 @@ async function runBenchmarks() {
 		check("findings mention migration implications", (technical.findings || []).some((item) => /migration|compatibility|adapter|invalidation/i.test(item)), 4, JSON.stringify(technical.findings || [])),
 	], {
 		sample: { answer: technical.answer, categories: (technical.sources || []).map((item) => item.sourceCategory) },
+	}));
+	results.push(makeCase("research-migration-bundle-trace-grades", 20, [
+		check("task profile is migration-impact", technical.metadata?.taskProfile === "migration-impact", 5, JSON.stringify({ taskProfile: technical.metadata?.taskProfile, selection: technical.metadata?.selection })),
+		check("bundle coverage includes migration evidence roles", Array.isArray(technical.metadata?.selection?.bundleCoverage?.satisfiedRoles) && technical.metadata.selection.bundleCoverage.satisfiedRoles.includes("official-migration-doc") && technical.metadata.selection.bundleCoverage.satisfiedRoles.includes("release-evidence"), 5, JSON.stringify(technical.metadata?.selection?.bundleCoverage || {})),
+		check("canonical proof is not weak", ["strong", "partial"].includes(String(technical.metadata?.selection?.canonicalProof?.anchorQuality || "")), 5, JSON.stringify(technical.metadata?.selection?.canonicalProof || {})),
+		check("trace grades expose bundle coverage check", (technical.metadata?.traceGrades?.checks || []).some((item) => item.name === "bundle-coverage"), 5, JSON.stringify(technical.metadata?.traceGrades || {})),
+	], {
+		sample: { selection: technical.metadata?.selection, traceGrades: technical.metadata?.traceGrades },
 	}));
 
 	const instructionHeavyTechnical = await postJson(`${backendBase}/v1/research`, {

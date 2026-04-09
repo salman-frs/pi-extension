@@ -32,6 +32,9 @@ async function main() {
 			question: "What are current best practices for React server caching?",
 			mode: "best-practice",
 			preferredDomains: ["react.dev", "nextjs.org", "vercel.com"],
+			canonicalWinner: "react.dev/reference/react/cache",
+			acceptableAnchors: ["react.dev/reference/react/cache", "nextjs.org/docs/app/guides/caching-without-cache-components"],
+			minimumEvidenceMix: ["official-docs"],
 			evaluate(result) {
 				return scoreChecks([
 					check("answer present", typeof result.answer === "string" && result.answer.length > 40, 3),
@@ -47,6 +50,9 @@ async function main() {
 			question: "vercel next.js proxyClientMaxBodySize docs",
 			mode: "technical",
 			preferredDomains: ["nextjs.org", "vercel.com"],
+			canonicalWinner: "nextjs.org/docs/pages/api-reference/config/next-config-js/proxyClientMaxBodySize",
+			acceptableAnchors: ["nextjs.org/docs/pages/api-reference/config/next-config-js/proxyClientMaxBodySize", "nextjs.org/docs/app/api-reference/config/next-config-js/proxyClientMaxBodySize"],
+			minimumEvidenceMix: ["official-docs"],
 			evaluate(result) {
 				const top = result.sources?.[0];
 				return scoreChecks([
@@ -54,6 +60,25 @@ async function main() {
 					check("canonical config source near top", /proxyclientmaxbodysize/i.test(top?.title || top?.url || ""), 4),
 					check("source metadata includes resultType", typeof top?.resultType === "string" && top.resultType.length > 0, 2),
 					check("recommendation present", typeof result.recommendation === "string" && result.recommendation.length > 10, 2),
+				]);
+			},
+		},
+		{
+			name: "react-19-upgrade-guide",
+			question: "React 19 official upgrade considerations",
+			mode: "technical",
+			preferredDomains: ["react.dev"],
+			canonicalWinner: "react.dev/blog/2024/04/25/react-19-upgrade-guide",
+			acceptableAnchors: ["react.dev/blog/2024/04/25/react-19-upgrade-guide"],
+			minimumEvidenceMix: ["official-docs", "release-notes"],
+			evaluate(result) {
+				const top = result.sources?.[0];
+				const categories = (result.sources || []).map((item) => item.sourceCategory);
+				return scoreChecks([
+					check("answer present", typeof result.answer === "string" && result.answer.length > 20, 2),
+					check("top source is upgrade guide or release notes", /upgrade|release/i.test(top?.title || "") || ["migration-guide", "release-notes"].includes(top?.resultType), 3),
+					check("official docs included", categories.includes("official-docs"), 2),
+					check("upgrade recommendation present", /upgrade|migration|breaking/i.test(result.answer || result.recommendation || ""), 3),
 				]);
 			},
 		},
@@ -72,6 +97,9 @@ async function main() {
 				score: evaluation.score,
 				maxScore: evaluation.maxScore,
 				checks: evaluation.checks,
+				canonicalWinner: benchmarkCase.canonicalWinner,
+				acceptableAnchors: benchmarkCase.acceptableAnchors,
+				minimumEvidenceMix: benchmarkCase.minimumEvidenceMix,
 				sample: provider.enabled ? summarizeResult(result) : undefined,
 				note: provider.enabled ? undefined : provider.skipReason,
 			});
@@ -219,6 +247,8 @@ function summarizeResult(result) {
 	return {
 		answer: result.answer,
 		recommendation: result.recommendation,
+		taskProfile: result.metadata?.taskProfile,
+		anchorQuality: result.metadata?.selection?.canonicalProof?.anchorQuality,
 		sourceTitles: Array.isArray(result.sources) ? result.sources.slice(0, 3).map((item) => item.title || item.url) : [],
 	};
 }
@@ -336,6 +366,8 @@ function renderMarkdownReport(report) {
 		lines.push(provider.enabled ? `- Score: ${provider.totalScore}/${provider.totalMaxScore}` : `- Status: SKIPPED (${provider.skipReason})`);
 		for (const item of provider.cases) {
 			lines.push(`- ${item.name}: ${item.enabled ? `${item.score}/${item.maxScore}` : `SKIPPED (${item.note})`}`);
+			if (item.canonicalWinner) lines.push(`  - Canonical winner: ${item.canonicalWinner}`);
+			if (Array.isArray(item.minimumEvidenceMix) && item.minimumEvidenceMix.length > 0) lines.push(`  - Minimum evidence mix: ${item.minimumEvidenceMix.join(", ")}`);
 		}
 		lines.push("");
 	}

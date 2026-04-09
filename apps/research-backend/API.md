@@ -177,7 +177,7 @@ Response:
   "tradeOffs": ["Release notes are broader, while migration guides are more implementation-specific."],
   "risks": ["Breaking changes may still require manual validation in edge cases."],
   "mitigations": ["Use staged rollout and regression checks before broad adoption."],
-  "selectionRationale": "Anchor chosen: React 19 Upgrade Guide. The selected bundle covers the strongest exact identifiers or canonical hints found in the query.",
+  "selectionRationale": "Anchor chosen: React 19 Upgrade Guide. Task profile: migration-impact. Canonical proof: strong anchor quality. The selected bundle covers the strongest exact identifiers or canonical hints found in the query.",
   "confidenceRationale": "Confidence is medium based on 4 selected sources, 2 authoritative sources, and 3 distinct domains.",
   "freshnessRationale": "Freshness preference: year. Newest dated evidence in the selected set: 2026-04-06T10:00:00Z.",
   "agreements": ["..."],
@@ -226,15 +226,35 @@ Response:
     "selection": {
       "anchorTitle": "React 19 Upgrade Guide",
       "anchorUrl": "https://react.dev/...",
-      "reasons": [{ "url": "https://react.dev/...", "reason": "anchor-source" }]
+      "taskProfile": "migration-impact",
+      "canonicalProof": {
+        "anchorQuality": "strong",
+        "exactMatch": true,
+        "strongExactMatch": true,
+        "matchesTaskProfile": true
+      },
+      "bundleCoverage": {
+        "requiredRoles": ["official-migration-doc", "release-evidence", "maintainer-or-community"],
+        "satisfiedRoles": ["official-migration-doc", "release-evidence", "maintainer-or-community"],
+        "missingRoles": []
+      },
+      "reasons": [{ "url": "https://react.dev/...", "reason": "anchor-source", "role": "anchor" }]
     },
     "queryPlan": {
       "intent": "technical-change",
       "constraintProfile": {
         "queryMode": "migration",
+        "taskProfile": "migration-impact",
         "canonicalPreference": "migration",
         "exactTerms": ["useActionState"]
       }
+    },
+    "traceGrades": {
+      "checks": [
+        { "name": "authoritative-anchor", "pass": true, "category": "anchor-quality" },
+        { "name": "bundle-coverage", "pass": true, "category": "bundle" }
+      ],
+      "failures": []
     },
     "searchDiagnostics": {
       "queryRewrites": ["..."],

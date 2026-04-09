@@ -261,7 +261,7 @@ export async function researchWorkflow(config, params, helpers) {
 		}
 
 		const candidateRanking = rankFetchedSources(fetched, questionPlan.searchQuery || params.question, params.preferredDomains || [], questionPlan.constraintProfile);
-		const precisionFiltered = candidateRanking.filter((source) => passesResearchPrecisionGate(source, questionPlan.constraintProfile));
+		const precisionFiltered = candidateRanking.filter((source) => passesResearchPrecisionGate(source, questionPlan.constraintProfile, candidateRanking));
 		const prioritized = precisionFiltered.length > 0 ? precisionFiltered : candidateRanking;
 		const selection = selectResearchSources(prioritized, params.numberOfSources, questionPlan.constraintProfile);
 		const ranked = selection.sources;
@@ -269,19 +269,28 @@ export async function researchWorkflow(config, params, helpers) {
 		const keywords = topKeywords(ranked.map((source) => [source.title, source.snippet, source.excerpt].filter(Boolean).join(" ")), 8);
 		const sourceTypes = summarizeSourceTypes(ranked);
 		const sourceCategories = summarizeSourceCategories(ranked);
-		const agreements = buildAgreements(ranked, keywords, questionPlan.constraintProfile);
-		const disagreements = buildDisagreements(ranked, params.mode, questionPlan.constraintProfile);
-		const confidence = computeConfidence(ranked, questionPlan.constraintProfile);
-		const retrySuggestions = buildRetrySuggestions({ failures: [...(search.errors || []), ...failures], ranked, mode: params.mode, constraintProfile: questionPlan.constraintProfile });
-		const recommendation = buildRecommendation({ ...params, question: questionPlan.searchQuery || params.question }, ranked, questionPlan.constraintProfile);
-		const bestPractices = buildBestPractices(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile);
-		const tradeOffs = buildTradeOffs(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile);
-		const risks = buildRisks(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile);
-		const mitigations = buildMitigations(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile);
+		const agreements = buildAgreements(ranked, keywords, questionPlan.constraintProfile, selection);
+		const disagreements = buildDisagreements(ranked, params.mode, questionPlan.constraintProfile, selection);
+		const confidence = computeConfidence(ranked, questionPlan.constraintProfile, selection);
+		const traceGrades = gradeResearchTrace({
+			candidates: candidateRanking,
+			filteredCandidates: prioritized,
+			selection,
+			sources: ranked,
+			constraintProfile: questionPlan.constraintProfile,
+			failures: [...(search.errors || []), ...failures],
+			confidence,
+		});
+		const retrySuggestions = buildRetrySuggestions({ failures: [...(search.errors || []), ...failures], ranked, mode: params.mode, constraintProfile: questionPlan.constraintProfile, traceGrades });
+		const recommendation = buildRecommendation({ ...params, question: questionPlan.searchQuery || params.question }, ranked, questionPlan.constraintProfile, selection);
+		const bestPractices = buildBestPractices(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile, selection);
+		const tradeOffs = buildTradeOffs(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile, selection);
+		const risks = buildRisks(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile, selection);
+		const mitigations = buildMitigations(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile, selection);
 		const selectionRationale = buildSelectionRationale(selection, ranked, questionPlan.constraintProfile);
-		const confidenceRationale = buildConfidenceRationale(confidence, ranked, questionPlan.constraintProfile, [...(search.errors || []), ...failures]);
-		const freshnessRationale = buildFreshnessRationale(ranked, params.freshness, questionPlan.constraintProfile);
-		const gaps = buildGaps(ranked, confidence, questionPlan.constraintProfile, [...(search.errors || []), ...failures]);
+		const confidenceRationale = buildConfidenceRationale(confidence, ranked, questionPlan.constraintProfile, [...(search.errors || []), ...failures], selection, traceGrades);
+		const freshnessRationale = buildFreshnessRationale(ranked, params.freshness, questionPlan.constraintProfile, selection);
+		const gaps = buildGaps(ranked, confidence, questionPlan.constraintProfile, [...(search.errors || []), ...failures], selection, traceGrades);
 		const status =
 			search.status === "failure" && ranked.length === 0
 				? "failure"
@@ -319,7 +328,9 @@ export async function researchWorkflow(config, params, helpers) {
 				searchDiagnostics: search.diagnostics,
 				searchErrors: search.errors,
 				selection,
+				traceGrades,
 				queryPlan: questionPlan,
+				taskProfile: questionPlan.constraintProfile?.taskProfile,
 				partialResult: status === "partial_success",
 				rationales: {
 					selection: selectionRationale,
@@ -401,6 +412,7 @@ function buildSummary(params, sources, sourceTypes, sourceCategories, keywords, 
 	}
 	return [
 		`Research bundle assembled for a ${params.mode} query using ${sources.length} ranked source(s).`,
+		selection?.taskProfile ? `Task profile: ${selection.taskProfile}.` : undefined,
 		selection?.anchorTitle ? `Anchor source: ${selection.anchorTitle}.` : undefined,
 		`Source mix: ${sourceTypes.length > 0 ? sourceTypes.join(", ") : "general"}.`,
 		sourceCategories.length > 0 ? `Source categories: ${sourceCategories.join(", ")}.` : undefined,
@@ -413,26 +425,35 @@ function buildSelectionRationale(selection, sources, constraintProfile) {
 	if (!sources?.length) return "No source selection rationale is available because no sources were selected.";
 	const anchor = selection?.anchorTitle || sources[0]?.title || sources[0]?.url;
 	const exactCoverage = (constraintProfile?.exactTerms || []).length === 0 || sources.some((source) => exactTermsMatchSource(source, constraintProfile?.exactTerms || []));
+	const canonicalProof = selection?.canonicalProof;
+	const bundleCoverage = selection?.bundleCoverage;
 	return [
 		anchor ? `Anchor chosen: ${anchor}.` : undefined,
+		selection?.taskProfile ? `Task profile: ${selection.taskProfile}.` : undefined,
 		selection?.anchorType ? `Anchor type: ${selection.anchorType}.` : undefined,
 		selection?.anchorDomain ? `Anchor domain: ${selection.anchorDomain}.` : undefined,
+		canonicalProof?.anchorQuality ? `Canonical proof: ${canonicalProof.anchorQuality} anchor quality.` : undefined,
 		exactCoverage ? "The selected bundle covers the strongest exact identifiers or canonical hints found in the query." : "The bundle is useful, but exact identifier coverage is incomplete.",
+		(bundleCoverage?.missingRoles || []).length === 0 ? "The selected source mix satisfies the expected evidence roles for this task family." : `The selected source mix is still missing: ${bundleCoverage.missingRoles.join(", ")}.`,
 	].filter(Boolean).join(" ");
 }
 
-function buildConfidenceRationale(confidence, sources, constraintProfile, failures) {
+function buildConfidenceRationale(confidence, sources, constraintProfile, failures, selection, traceGrades) {
 	if (!sources?.length) return "Confidence is low because no usable evidence was retrieved.";
 	const authoritativeCount = sources.filter((source) => isAuthoritativeCategory(source.sourceCategory)).length;
 	const domainCount = new Set(sources.map((source) => source.domain).filter(Boolean)).size;
+	const failedTraceChecks = traceGrades?.failures?.length || 0;
 	return [
 		`Confidence is ${confidence} based on ${sources.length} selected source(s), ${authoritativeCount} authoritative source(s), and ${domainCount} distinct domain(s).`,
 		(constraintProfile?.exactTerms || []).length > 0 ? (sources.some((source) => exactTermsMatchSource(source, constraintProfile.exactTerms)) ? "At least one selected source matches the strongest exact technical identifier from the query." : "No selected source matched the strongest exact technical identifier from the query.") : undefined,
+		(selection?.canonicalProof?.anchorQuality === "strong") ? "The selected anchor passed the strongest canonical-exactness checks for this task." : undefined,
+		(selection?.bundleCoverage?.missingRoles || []).length > 0 ? `The bundle is missing expected evidence roles (${selection.bundleCoverage.missingRoles.join(", ")}), so confidence is intentionally limited.` : undefined,
+		failedTraceChecks > 0 ? `${failedTraceChecks} retrieval trace quality check(s) failed, which reduced confidence.` : undefined,
 		(failures || []).length > 0 ? `${failures.length} upstream search or fetch failure(s) reduced confidence.` : undefined,
 	].filter(Boolean).join(" ");
 }
 
-function buildFreshnessRationale(sources, freshness, constraintProfile) {
+function buildFreshnessRationale(sources, freshness, constraintProfile, selection) {
 	if (!sources?.length) return "No freshness rationale is available because no sources were selected.";
 	const dated = sources.filter((source) => source.publishedAt);
 	if (dated.length === 0) return `Freshness preference was ${freshness}, but the selected sources did not expose reliable publish timestamps.`;
@@ -441,6 +462,7 @@ function buildFreshnessRationale(sources, freshness, constraintProfile) {
 		`Freshness preference: ${freshness}.`,
 		newest?.publishedAt ? `Newest dated evidence in the selected set: ${newest.publishedAt}.` : undefined,
 		["release", "migration", "technical-change"].includes(constraintProfile?.queryMode) ? "Recency was weighted more heavily because the task looks change-sensitive." : undefined,
+		selection?.taskProfile === "migration-impact" || selection?.taskProfile === "release-change" ? "Release and migration evidence was favored because the task is likely sensitive to version changes." : undefined,
 	].filter(Boolean).join(" ");
 }
 
@@ -459,7 +481,7 @@ function buildAnswer(params, sources, agreements, disagreements, constraintProfi
 	].filter(Boolean).join(" ");
 }
 
-function buildRecommendation(params, sources, constraintProfile) {
+function buildRecommendation(params, sources, constraintProfile, selection) {
 	if (sources.length === 0) {
 		return `No grounded recommendation is available for “${params.question}” because no usable sources were retrieved.`;
 	}
@@ -471,10 +493,13 @@ function buildRecommendation(params, sources, constraintProfile) {
 	const verificationClause = exactCoverage || (constraintProfile?.exactTerms || []).length === 0
 		? " and use the supporting sources to validate trade-offs and edge cases."
 		: ", but verify the exact technical identifier manually before acting.";
-	return `${recommendationLead}${authorityClause}${verificationClause}`;
+	const bundleClause = (selection?.bundleCoverage?.missingRoles || []).length === 0
+		? ""
+		: ` Also validate missing evidence roles (${selection.bundleCoverage.missingRoles.join(", ")}) before finalizing the decision.`;
+	return `${recommendationLead}${authorityClause}${verificationClause}${bundleClause}`;
 }
 
-function buildBestPractices(question, sources, constraintProfile) {
+function buildBestPractices(question, sources, constraintProfile, selection) {
 	const signals = collectSourceSignals(question, sources, {
 		patterns: [/\bshould\b/i, /\brecommend(?:ed|s)?\b/i, /best practice/i, /\bprefer\b/i, /\buse\b/i, /\bvalidate\b/i, /\bdocument\b/i, /\bobservability\b/i],
 		limit: 4,
@@ -487,10 +512,13 @@ function buildBestPractices(question, sources, constraintProfile) {
 	if (["architecture", "technical-change", "migration"].includes(constraintProfile?.queryMode)) {
 		fallbacks.push("Validate operational trade-offs and rollout implications before committing to the recommended path.");
 	}
+	if ((selection?.bundleCoverage?.missingRoles || []).length > 0) {
+		fallbacks.push(`Fill the remaining evidence gaps for this task family before turning the research bundle into implementation guidance (${selection.bundleCoverage.missingRoles.join(", ")}).`);
+	}
 	return uniqueNonEmpty(fallbacks).slice(0, 4);
 }
 
-function buildTradeOffs(question, sources, constraintProfile) {
+function buildTradeOffs(question, sources, constraintProfile, selection) {
 	const signals = collectSourceSignals(question, sources, {
 		patterns: [/trade-?off/i, /\bhowever\b/i, /\bbut\b/i, /\bversus\b|\bvs\b/i, /\bcost\b/i, /\bcomplex(?:ity)?\b/i, /\blatency\b/i, /\bperformance\b/i, /\bflexib(?:le|ility)\b/i],
 		limit: 4,
@@ -499,10 +527,11 @@ function buildTradeOffs(question, sources, constraintProfile) {
 	const fallbacks = [];
 	if (sources.length >= 2) fallbacks.push("The retrieved sources emphasize different trade-offs, so compare canonical guidance with supporting evidence before deciding.");
 	if (constraintProfile?.decisionMode) fallbacks.push("The best option depends on which trade-offs matter most for your runtime, complexity budget, and operational constraints.");
+	if (selection?.taskProfile === "architecture-decision") fallbacks.push("Balance official prescriptive guidance with practitioner trade-offs before locking the architecture.");
 	return uniqueNonEmpty(fallbacks).slice(0, 4);
 }
 
-function buildRisks(question, sources, constraintProfile) {
+function buildRisks(question, sources, constraintProfile, selection) {
 	const signals = collectSourceSignals(question, sources, {
 		patterns: [/\brisk/i, /\bcaveat/i, /warning/i, /deprecated/i, /breaking/i, /limitation/i, /edge case/i, /compatib(?:le|ility)/i, /security/i, /stale/i],
 		limit: 4,
@@ -515,10 +544,13 @@ function buildRisks(question, sources, constraintProfile) {
 	if (["config", "api", "bugfix"].includes(constraintProfile?.queryMode)) {
 		fallbacks.push("Exact config or API identifiers may still need manual verification against primary references before implementation.");
 	}
+	if (selection?.canonicalProof?.anchorQuality === "weak") {
+		fallbacks.push("The selected anchor is only weakly canonical for the task, so implementation decisions should be verified manually.");
+	}
 	return uniqueNonEmpty(fallbacks).slice(0, 4);
 }
 
-function buildMitigations(question, sources, constraintProfile) {
+function buildMitigations(question, sources, constraintProfile, selection) {
 	const signals = collectSourceSignals(question, sources, {
 		patterns: [/\bmitigat/i, /\bvalidate\b/i, /\btest\b/i, /\bphase(?:d)?\b/i, /\bstaging\b/i, /\brollback\b/i, /\bobserve\b/i, /\bmonitor/i, /\breview\b/i, /\bverify\b/i],
 		limit: 4,
@@ -529,10 +561,13 @@ function buildMitigations(question, sources, constraintProfile) {
 	if (["migration", "technical-change"].includes(constraintProfile?.queryMode)) {
 		fallbacks.push("Use staged rollout, observability, and rollback readiness when applying changes suggested by release or migration research.");
 	}
+	if ((selection?.bundleCoverage?.missingRoles || []).length > 0) {
+		fallbacks.push(`Collect the missing evidence roles (${selection.bundleCoverage.missingRoles.join(", ")}) before treating the recommendation as final.`);
+	}
 	return uniqueNonEmpty(fallbacks).slice(0, 4);
 }
 
-function buildAgreements(sources, keywords, constraintProfile) {
+function buildAgreements(sources, keywords, constraintProfile, selection) {
 	const outputs = [];
 	if (keywords.length > 0) outputs.push(`Repeated themes across sources include ${keywords.slice(0, 6).join(", ")}.`);
 	const authoritative = sources.filter((source) => isAuthoritativeCategory(source.sourceCategory));
@@ -540,21 +575,27 @@ function buildAgreements(sources, keywords, constraintProfile) {
 	if (constraintProfile?.canonicalPreference && sources[0]?.resultType) {
 		outputs.push(`The selected anchor matches the expected result type family for this task (${sources[0].resultType}).`);
 	}
+	if (selection?.canonicalProof?.anchorQuality === "strong") {
+		outputs.push("The selected anchor passed strong canonical-exactness checks for this task.");
+	}
 	return outputs;
 }
 
-function buildDisagreements(sources, mode, constraintProfile) {
+function buildDisagreements(sources, mode, constraintProfile, selection) {
 	const outputs = detectDisagreementSignals(sources);
 	if (mode === "news" && sources.some((source) => !source.publishedAt)) {
 		outputs.push("Some news-style sources did not expose clear publish timestamps, so recency ranking may be imperfect.");
 	}
-	if (["bugfix", "config", "api"].includes(constraintProfile?.queryMode) && !sources.some((source) => source.resultType === "configuration-reference" || source.resultType === "api-reference" || source.resultType === "troubleshooting")) {
+	if (["bugfix", "config", "api"].includes(constraintProfile?.queryMode) && !sources.some((source) => source.resultType === "configuration-reference" || source.resultType === "api-reference" || source.resultType === "troubleshooting" || source.resultType === "package-docs")) {
 		outputs.push("The final bundle lacks a clearly exact reference/troubleshooting page, so verify config/API details manually.");
+	}
+	if ((selection?.bundleCoverage?.missingRoles || []).length > 0) {
+		outputs.push(`The selected bundle is still missing expected evidence roles: ${selection.bundleCoverage.missingRoles.join(", ")}.`);
 	}
 	return outputs;
 }
 
-function buildGaps(sources, confidence, constraintProfile, failures = []) {
+function buildGaps(sources, confidence, constraintProfile, failures = [], selection, traceGrades) {
 	const gaps = [];
 	if (sources.length < 3) gaps.push("Fewer than three strong sources were retrieved.");
 	if (confidence === "low") gaps.push("Evidence diversity is limited; validate important claims manually.");
@@ -563,6 +604,12 @@ function buildGaps(sources, confidence, constraintProfile, failures = []) {
 	}
 	if (["repo", "release", "migration", "config", "api"].includes(constraintProfile?.queryMode) && (constraintProfile?.exactTerms || []).length > 0 && !sources.some((source) => exactTermsMatchSource(source, constraintProfile.exactTerms))) {
 		gaps.push("No selected source matched the strongest exact technical identifier from the query.");
+	}
+	if ((selection?.bundleCoverage?.missingRoles || []).length > 0) {
+		gaps.push(`The selected source bundle is missing expected evidence roles: ${selection.bundleCoverage.missingRoles.join(", ")}.`);
+	}
+	if ((traceGrades?.failures || []).length > 0) {
+		gaps.push(`Retrieval trace checks failed for: ${(traceGrades.failures || []).map((item) => item.class).join(", ")}.`);
 	}
 	if ((failures || []).length > 0) {
 		gaps.push(`Some sources could not be searched or fetched automatically (${failures.length} failure${failures.length === 1 ? "" : "s"}).`);
@@ -605,13 +652,16 @@ function uniqueNonEmpty(values) {
 	return [...new Set((values || []).filter(Boolean))];
 }
 
-function computeConfidence(sources, constraintProfile) {
+function computeConfidence(sources, constraintProfile, selection) {
 	if (sources.length === 0) return "low";
 	const authoritativeCount = sources.filter((source) => isAuthoritativeCategory(source.sourceCategory)).length;
 	const diverseDomains = new Set(sources.map((source) => source.domain).filter(Boolean)).size;
 	const exactCoverage = (constraintProfile?.exactTerms || []).length === 0 || sources.some((source) => exactTermsMatchSource(source, constraintProfile.exactTerms));
-	if (sources.length >= 5 && authoritativeCount >= 2 && diverseDomains >= 3 && exactCoverage) return "high";
-	if (sources.length >= 3 && authoritativeCount >= 1 && exactCoverage) return "medium";
+	const strongExactCoverage = (constraintProfile?.exactTerms || []).length === 0 || sources.some((source) => strongExactTermsMatchSource(source, constraintProfile.exactTerms));
+	const missingRoles = selection?.bundleCoverage?.missingRoles || [];
+	const canonicalStrength = selection?.canonicalProof?.anchorQuality || "weak";
+	if (sources.length >= 5 && authoritativeCount >= 2 && diverseDomains >= 3 && strongExactCoverage && canonicalStrength === "strong" && missingRoles.length === 0) return "high";
+	if (sources.length >= 3 && authoritativeCount >= 1 && exactCoverage && canonicalStrength !== "weak") return missingRoles.length === 0 ? "medium" : "low";
 	return authoritativeCount >= 1 ? "medium" : "low";
 }
 
@@ -678,6 +728,7 @@ async function performResearchDiscovery(config, params, questionPlan, helpers) {
 
 function buildResearchSearchConfigs(params, questionPlan) {
 	const baseQuery = questionPlan.searchQuery || params.question;
+	const constraintProfile = questionPlan.constraintProfile || {};
 	const base = {
 		query: baseQuery,
 		freshness: params.freshness,
@@ -688,30 +739,62 @@ function buildResearchSearchConfigs(params, questionPlan) {
 	};
 	const configs = [];
 	const primarySourceType = inferResearchSourceType(params.mode, questionPlan.intent);
-	configs.push({ ...base, sourceType: primarySourceType, label: "primary" });
-	if (["migration", "technical-change"].includes(questionPlan.constraintProfile?.queryMode)) {
-		configs.push({ ...base, query: `${baseQuery} migration guide release notes`, sourceType: "docs", label: "migration-anchor" });
+	const addConfig = (query, sourceType, label, extra = {}) => {
+		configs.push({
+			...base,
+			query,
+			sourceType,
+			label,
+			preferredDomains: uniqueNonEmpty([...(base.preferredDomains || []), ...(extra.preferredDomains || [])]),
+			blockedDomains: uniqueNonEmpty([...(base.blockedDomains || []), ...(extra.blockedDomains || [])]),
+		});
+	};
+
+	addConfig(baseQuery, primarySourceType, "primary");
+
+	if (["exact-docs"].includes(constraintProfile.taskProfile)) {
+		addConfig(`${baseQuery} official reference`, "docs", "reference-anchor");
+		for (const exactTerm of (constraintProfile.exactTerms || []).slice(0, 2)) {
+			addConfig(`${baseQuery} "${exactTerm}" official docs`, "docs", `exact-reference-${exactTerm}`);
+		}
 	}
-	if (["config", "api"].includes(questionPlan.constraintProfile?.queryMode)) {
-		configs.push({ ...base, query: `${baseQuery} official reference`, sourceType: "docs", label: "reference-anchor" });
+	if (["migration-impact"].includes(constraintProfile.taskProfile)) {
+		addConfig(`${baseQuery} migration guide release notes`, "docs", "migration-anchor");
+		addConfig(`${baseQuery} breaking changes changelog`, "docs", "release-evidence");
+		addConfig(`${baseQuery} maintainer discussion compatibility`, "github", "migration-community");
 	}
-	if (questionPlan.constraintProfile?.queryMode === "architecture") {
-		configs.push({ ...base, query: `${baseQuery} prescriptive guidance trade-offs compare`, sourceType: "docs", label: "architecture-anchor" });
-		configs.push({ ...base, query: `${baseQuery} architecture best practices`, sourceType: "general", label: "architecture-support" });
+	if (["release-change"].includes(constraintProfile.taskProfile)) {
+		addConfig(`${baseQuery} release notes changelog`, "docs", "release-anchor");
+		addConfig(`${baseQuery} github releases`, "github", "release-github");
 	}
-	if (questionPlan.constraintProfile?.queryMode === "novel-discovery") {
-		configs.push({ ...base, query: `${baseQuery} official docs getting started`, sourceType: "docs", label: "discovery-docs" });
-		configs.push({ ...base, query: `${baseQuery} github repo releases`, sourceType: "github", label: "discovery-github" });
-		configs.push({ ...base, query: `${baseQuery} launch announcement blog`, sourceType: "general", label: "discovery-announcement" });
+	if (["bugfix-investigation"].includes(constraintProfile.taskProfile)) {
+		addConfig(`${baseQuery} troubleshooting official docs`, "docs", "bugfix-reference");
+		addConfig(`${baseQuery} github issue discussion`, "github", "bugfix-community");
 	}
-	if (questionPlan.constraintProfile?.needsGithubEvidence) {
-		configs.push({ ...base, query: `${baseQuery} github issues discussions releases`, sourceType: "github", label: "github-support" });
+	if (["architecture-decision"].includes(constraintProfile.taskProfile)) {
+		addConfig(`${baseQuery} prescriptive guidance trade-offs compare`, "docs", "architecture-anchor");
+		addConfig(`${baseQuery} service quotas limitations`, "docs", "architecture-constraints");
+		addConfig(`${baseQuery} architecture best practices tradeoffs`, "general", "architecture-support");
 	}
-	if (questionPlan.constraintProfile?.queryMode === "repo") {
-		configs.push({ ...base, query: `${baseQuery} github repository`, sourceType: "github", label: "repo-anchor" });
+	if (["official-vs-community"].includes(constraintProfile.taskProfile)) {
+		addConfig(`${baseQuery} official docs`, "docs", "official-position");
+		addConfig(`${baseQuery} community discussion forum`, "general", "community-position");
 	}
-	if (questionPlan.constraintProfile?.queryMode === "release") {
-		configs.push({ ...base, query: `${baseQuery} release notes changelog`, sourceType: "github", label: "release-anchor" });
+	if (constraintProfile.queryMode === "novel-discovery") {
+		addConfig(`${baseQuery} official docs getting started`, "docs", "discovery-docs");
+		addConfig(`${baseQuery} github repo releases`, "github", "discovery-github");
+		addConfig(`${baseQuery} launch announcement blog`, "general", "discovery-announcement");
+	}
+	if (constraintProfile.needsGithubEvidence) {
+		addConfig(`${baseQuery} github issues discussions releases`, "github", "github-support");
+	}
+	if (constraintProfile.queryMode === "repo") {
+		addConfig(`${baseQuery} github repository`, "github", "repo-anchor");
+	}
+	for (const hint of constraintProfile.ecosystemHints || []) {
+		for (const queryHint of (hint.queryHints || []).slice(0, 4)) {
+			addConfig(queryHint, /github/i.test(queryHint) ? "github" : "docs", `ecosystem-${hint.ecosystem}`, { preferredDomains: hint.preferredDomains || [] });
+		}
 	}
 	return dedupeSearchConfigs(configs);
 }
@@ -744,7 +827,7 @@ function modeToProfile(mode) {
 	}
 }
 
-function passesResearchPrecisionGate(source, constraintProfile) {
+function passesResearchPrecisionGate(source, constraintProfile, candidates = []) {
 	if (!constraintProfile) return true;
 	const domain = String(source.domain || "").toLowerCase();
 	const conciseHaystack = [source.title, source.snippet, source.url, source.publishedAt].filter(Boolean).join(" ").toLowerCase();
@@ -764,11 +847,24 @@ function passesResearchPrecisionGate(source, constraintProfile) {
 		const matched = group.terms.some((term) => conciseHaystack.includes(term));
 		if (group.strict && !matched) return false;
 	}
-	for (const entity of constraintProfile.entities || []) {
-		if (!conciseHaystack.includes(entity)) return false;
+	if (["exact-docs", "migration-impact", "bugfix-investigation", "release-change"].includes(constraintProfile.taskProfile)) {
+		for (const entity of constraintProfile.entities || []) {
+			if (!conciseHaystack.includes(entity)) return false;
+		}
 	}
-	if ((constraintProfile.exactTerms || []).length > 0 && ["config", "api", "bugfix", "repo", "release", "migration"].includes(constraintProfile.queryMode)) {
-		if (!exactTermsMatchSource(source, constraintProfile.exactTerms)) return false;
+	if ((constraintProfile.exactTerms || []).length > 0 && ["config", "api", "bugfix", "repo", "release", "migration", "technical-change"].includes(constraintProfile.queryMode)) {
+		const exactMatch = constraintProfile.requiresStrongExactMatch
+			? strongExactTermsMatchSource(source, constraintProfile.exactTerms)
+			: exactTermsMatchSource(source, constraintProfile.exactTerms);
+		if (!exactMatch) return false;
+	}
+	if (constraintProfile.taskProfile === "migration-impact" && ["github-issue", "github-discussion"].includes(source.resultType)) {
+		const officialCandidateExists = candidates.some((candidate) => candidate !== source && anchorMatchesTaskProfile(candidate, constraintProfile));
+		if (officialCandidateExists) return false;
+	}
+	if (["exact-docs", "migration-impact", "release-change"].includes(constraintProfile.taskProfile) && isGenericOfficialSource(source)) {
+		const strongerCandidateExists = candidates.some((candidate) => candidate !== source && sameSourceFamily(candidate, source) && strongerCanonicalCandidate(candidate, source, constraintProfile));
+		if (strongerCandidateExists) return false;
 	}
 	return true;
 }
@@ -777,66 +873,75 @@ function selectResearchSources(candidates, maxSources, constraintProfile) {
 	const pool = [...candidates];
 	const selected = [];
 	const selectionReasons = [];
+	const policy = buildSelectionPolicy(constraintProfile);
 	const anchor = pickAnchorSource(pool, constraintProfile);
 	if (anchor) {
 		selected.push(anchor);
-		selectionReasons.push({ url: anchor.url, reason: "anchor-source" });
+		selectionReasons.push({ url: anchor.url, reason: "anchor-source", role: "anchor" });
 	}
-	for (const picker of buildCoveragePickers(constraintProfile)) {
+	for (const picker of buildCoveragePickers(constraintProfile, policy)) {
 		const match = pool.find((candidate) => !selected.some((item) => comparableUrlKey(item.url) === comparableUrlKey(candidate.url)) && picker.test(candidate));
 		if (match) {
 			selected.push(match);
-			selectionReasons.push({ url: match.url, reason: picker.reason });
+			selectionReasons.push({ url: match.url, reason: picker.reason, role: picker.role });
 		}
 		if (selected.length >= maxSources) break;
 	}
-	for (const candidate of orderSelectionPool(pool, anchor, constraintProfile)) {
+	for (const candidate of orderSelectionPool(pool, anchor, constraintProfile, policy)) {
 		if (selected.length >= maxSources) break;
 		if (selected.some((item) => comparableUrlKey(item.url) === comparableUrlKey(candidate.url))) continue;
-		if (selected.some((item) => item.domain && candidate.domain && item.domain === candidate.domain) && !shouldAllowSameDomain(candidate, constraintProfile, anchor)) continue;
+		if (selected.some((item) => item.domain && candidate.domain && item.domain === candidate.domain) && !shouldAllowSameDomain(candidate, constraintProfile, anchor, policy)) continue;
 		selected.push(candidate);
-		selectionReasons.push({ url: candidate.url, reason: anchor?.domain && candidate.domain === anchor.domain ? "anchor-domain-support" : "score-fill" });
+		selectionReasons.push({ url: candidate.url, reason: anchor?.domain && candidate.domain === anchor.domain ? "anchor-domain-support" : "score-fill", role: "supporting" });
 	}
+	const sources = selected.slice(0, maxSources);
+	const canonicalProof = buildCanonicalProof(anchor, pool, constraintProfile);
+	const bundleCoverage = summarizeBundleCoverage(sources, policy, constraintProfile);
 	return {
-		sources: selected.slice(0, maxSources),
+		sources,
 		anchorUrl: anchor?.url,
 		anchorTitle: anchor?.title,
 		anchorType: anchor?.resultType,
 		anchorDomain: anchor?.domain,
+		taskProfile: policy.taskProfile,
+		policy,
+		canonicalProof,
+		bundleCoverage,
 		reasons: selectionReasons,
 	};
 }
 
 function pickAnchorSource(candidates, constraintProfile) {
 	if (candidates.length === 0) return undefined;
-	const scored = candidates.map((candidate) => ({ candidate, score: anchorScore(candidate, constraintProfile) }));
+	const scored = candidates.map((candidate) => ({ candidate, score: anchorScore(candidate, constraintProfile, candidates) }));
 	scored.sort((a, b) => b.score - a.score);
 	return scored[0]?.candidate;
 }
 
-function anchorScore(source, constraintProfile) {
+function anchorScore(source, constraintProfile, candidates = []) {
 	let score = Number(source.score || 0);
 	if (isAuthoritativeCategory(source.sourceCategory)) score += 12;
 	if (matchesPreferredDomains(source, constraintProfile?.preferredDomains || [])) score += 12;
 	if (exactTermsMatchSource(source, constraintProfile?.exactTerms || [])) score += 18;
+	if (strongExactTermsMatchSource(source, constraintProfile?.exactTerms || [])) score += 16;
 	switch (constraintProfile?.canonicalPreference || constraintProfile?.queryMode) {
 		case "migration":
-			if (source.resultType === "migration-guide") score += 30;
-			if (["release-notes", "github-releases"].includes(source.resultType)) score += 18;
+			if (["migration-guide", "package-docs"].includes(source.resultType)) score += 30;
+			if (["release-notes", "github-releases", "package-registry"].includes(source.resultType)) score += 18;
 			break;
 		case "config":
-			if (source.resultType === "configuration-reference") score += 30;
+			if (["configuration-reference", "package-docs"].includes(source.resultType)) score += 30;
 			if (source.resultType === "api-reference") score += 18;
 			break;
 		case "api":
-			if (source.resultType === "api-reference") score += 28;
+			if (["api-reference", "package-docs"].includes(source.resultType)) score += 28;
 			if (source.resultType === "configuration-reference") score += 12;
 			break;
 		case "repo":
 			if (source.resultType === "repository-home") score += 30;
 			break;
 		case "release":
-			if (["github-releases", "release-notes"].includes(source.resultType)) score += 28;
+			if (["github-releases", "release-notes", "package-registry"].includes(source.resultType)) score += 28;
 			break;
 		case "architecture":
 			if (source.resultType === "architecture-guide") score += 26;
@@ -845,89 +950,250 @@ function anchorScore(source, constraintProfile) {
 			if (["getting-started", "announcement", "repository-home", "github-releases", "release-notes"].includes(source.resultType)) score += 24;
 			break;
 		case "bugfix":
-			if (["troubleshooting", "api-reference", "configuration-reference", "github-issue", "github-discussion"].includes(source.resultType)) score += 20;
+			if (["troubleshooting", "api-reference", "configuration-reference", "package-docs", "github-issue", "github-discussion"].includes(source.resultType)) score += 20;
 			break;
 	}
+	if (["exact-docs", "migration-impact", "release-change"].includes(constraintProfile?.taskProfile) && isGenericOfficialSource(source)) score -= 18;
+	if (constraintProfile?.taskProfile === "migration-impact") {
+		if (anchorMatchesTaskProfile(source, constraintProfile)) score += 18;
+		if (["github-issue", "github-discussion"].includes(source.resultType)) score -= 22;
+	}
+	if (constraintProfile?.taskProfile === "novel-discovery") {
+		if (matchesResultTypes(source, ["getting-started", "guide", "announcement"])) score += 12;
+		if (["github-issue", "github-discussion"].includes(source.resultType)) score -= 12;
+	}
+	if (candidates.some((candidate) => candidate !== source && sameSourceFamily(candidate, source) && strongerCanonicalCandidate(candidate, source, constraintProfile))) score -= 12;
 	return score;
 }
 
-function buildCoveragePickers(constraintProfile) {
-	const queryMode = constraintProfile?.queryMode;
-	if (queryMode === "migration" || queryMode === "technical-change") {
+function buildCoveragePickers(constraintProfile, policy = buildSelectionPolicy(constraintProfile)) {
+	const taskProfile = policy.taskProfile;
+	if (taskProfile === "migration-impact") {
 		return [
-			{ reason: "official-migration-doc", test: (source) => ["migration-guide", "release-notes", "github-releases"].includes(source.resultType) && isAuthoritativeCategory(source.sourceCategory) },
-			{ reason: "community-upgrade-signal", test: (source) => ["github-issue", "github-discussion", "vendor-blog"].includes(source.sourceCategory) || ["github-issue", "github-discussion"].includes(source.resultType) },
+			{ role: "official-migration-doc", reason: "official-migration-doc", test: (source) => matchesResultTypes(source, ["migration-guide", "package-docs"]) && isAuthoritativeCategory(source.sourceCategory) },
+			{ role: "release-evidence", reason: "release-evidence", test: (source) => matchesResultTypes(source, ["release-notes", "github-releases", "package-registry"]) },
+			{ role: "maintainer-or-community", reason: "maintainer-or-community", test: (source) => ["github-issue", "github-discussion", "vendor-blog", "forum-community"].includes(source.resultType) || ["github-issue", "github-discussion", "vendor-blog", "forum-community"].includes(source.sourceCategory) },
 		];
 	}
-	if (queryMode === "bugfix") {
+	if (taskProfile === "bugfix-investigation") {
 		return [
-			{ reason: "exact-reference", test: (source) => ["configuration-reference", "api-reference", "troubleshooting"].includes(source.resultType) },
-			{ reason: "community-bug-signal", test: (source) => ["github-issue", "github-discussion"].includes(source.resultType) },
+			{ role: "exact-reference", reason: "exact-reference", test: (source) => matchesResultTypes(source, ["configuration-reference", "api-reference", "troubleshooting", "package-docs"]) },
+			{ role: "community-bug-signal", reason: "community-bug-signal", test: (source) => matchesResultTypes(source, ["github-issue", "github-discussion"]) },
 		];
 	}
-	if (queryMode === "architecture") {
+	if (taskProfile === "architecture-decision") {
 		return [
-			{ reason: "official-architecture-doc", test: (source) => source.resultType === "architecture-guide" && isAuthoritativeCategory(source.sourceCategory) },
-			{ reason: "supporting-official-doc", test: (source) => isAuthoritativeCategory(source.sourceCategory) },
+			{ role: "official-architecture-doc", reason: "official-architecture-doc", test: (source) => matchesResultTypes(source, ["architecture-guide"]) && isAuthoritativeCategory(source.sourceCategory) },
+			{ role: "official-constraint-doc", reason: "official-constraint-doc", test: (source) => isAuthoritativeCategory(source.sourceCategory) },
+			{ role: "community-tradeoff", reason: "community-tradeoff", test: (source) => ["vendor-blog", "forum-community", "secondary-tech-blog"].includes(source.sourceCategory) },
 		];
 	}
-	if (queryMode === "novel-discovery") {
+	if (taskProfile === "release-change") {
 		return [
-			{ reason: "official-discovery-doc", test: (source) => ["getting-started", "guide", "announcement"].includes(source.resultType) && isAuthoritativeCategory(source.sourceCategory) },
-			{ reason: "repo-signal", test: (source) => ["repository-home", "github-releases"].includes(source.resultType) },
+			{ role: "release-anchor", reason: "release-anchor", test: (source) => matchesResultTypes(source, ["github-releases", "release-notes", "package-registry"]) },
+			{ role: "repo-home", reason: "repo-home", test: (source) => source.resultType === "repository-home" },
 		];
 	}
-	if (queryMode === "repo") {
+	if (taskProfile === "official-vs-community") {
 		return [
-			{ reason: "canonical-repo", test: (source) => source.resultType === "repository-home" },
-			{ reason: "release-surface", test: (source) => source.resultType === "github-releases" },
+			{ role: "official-position", reason: "official-position", test: (source) => isAuthoritativeCategory(source.sourceCategory) },
+			{ role: "community-position", reason: "community-position", test: (source) => ["forum-community", "github-discussion", "github-issue", "secondary-tech-blog"].includes(source.sourceCategory) || matchesResultTypes(source, ["github-issue", "github-discussion"]) },
 		];
 	}
-	if (queryMode === "release") {
+	if (taskProfile === "exact-docs") {
 		return [
-			{ reason: "release-anchor", test: (source) => ["github-releases", "release-notes"].includes(source.resultType) },
-			{ reason: "repo-home", test: (source) => source.resultType === "repository-home" },
+			{ role: "exact-reference", reason: "exact-reference", test: (source) => matchesResultTypes(source, ["configuration-reference", "api-reference", "package-docs"]) && strongExactTermsMatchSource(source, constraintProfile?.exactTerms || []) },
+			{ role: "supporting-official-doc", reason: "supporting-official-doc", test: (source) => isAuthoritativeCategory(source.sourceCategory) },
 		];
 	}
-	if (["config", "api"].includes(queryMode)) {
+	if (constraintProfile?.queryMode === "novel-discovery") {
 		return [
-			{ reason: "exact-reference", test: (source) => ["configuration-reference", "api-reference"].includes(source.resultType) },
-			{ reason: "troubleshooting-support", test: (source) => ["troubleshooting", "github-issue", "github-discussion"].includes(source.resultType) },
+			{ role: "official-discovery-doc", reason: "official-discovery-doc", test: (source) => ["getting-started", "guide", "announcement"].includes(source.resultType) && isAuthoritativeCategory(source.sourceCategory) },
+			{ role: "repo-signal", reason: "repo-signal", test: (source) => ["repository-home", "github-releases"].includes(source.resultType) },
+		];
+	}
+	if (constraintProfile?.queryMode === "repo") {
+		return [
+			{ role: "canonical-repo", reason: "canonical-repo", test: (source) => source.resultType === "repository-home" },
+			{ role: "release-surface", reason: "release-surface", test: (source) => source.resultType === "github-releases" },
 		];
 	}
 	return [
-		{ reason: "authoritative-support", test: (source) => isAuthoritativeCategory(source.sourceCategory) },
+		{ role: "authoritative-support", reason: "authoritative-support", test: (source) => isAuthoritativeCategory(source.sourceCategory) },
 	];
 }
 
-function orderSelectionPool(pool, anchor, constraintProfile) {
-	return [...pool].sort((a, b) => selectionPreferenceScore(b, anchor, constraintProfile) - selectionPreferenceScore(a, anchor, constraintProfile));
+function orderSelectionPool(pool, anchor, constraintProfile, policy = buildSelectionPolicy(constraintProfile)) {
+	return [...pool].sort((a, b) => selectionPreferenceScore(b, anchor, constraintProfile, policy) - selectionPreferenceScore(a, anchor, constraintProfile, policy));
 }
 
-function selectionPreferenceScore(candidate, anchor, constraintProfile) {
+function selectionPreferenceScore(candidate, anchor, constraintProfile, policy) {
 	let score = Number(candidate.score || 0);
 	if (anchor?.domain && candidate.domain === anchor.domain) score += 18;
 	if (matchesPreferredDomains(candidate, constraintProfile?.preferredDomains || [])) score += 12;
 	if (exactTermsMatchSource(candidate, constraintProfile?.exactTerms || [])) score += 10;
+	if (strongExactTermsMatchSource(candidate, constraintProfile?.exactTerms || [])) score += 8;
 	if (["migration", "technical-change", "config", "api"].includes(constraintProfile?.queryMode) && candidate.sourceCategory === "official-docs") score += 8;
+	if (policy.taskProfile === "architecture-decision" && ["vendor-blog", "forum-community", "secondary-tech-blog"].includes(candidate.sourceCategory)) score += 10;
+	if (policy.taskProfile === "migration-impact" && ["github-issue", "github-discussion"].includes(candidate.resultType)) score += 8;
 	return score;
 }
 
-function shouldAllowSameDomain(candidate, constraintProfile, anchor) {
+function shouldAllowSameDomain(candidate, constraintProfile, anchor, policy) {
 	if (["repo", "release", "config", "api", "migration", "technical-change", "novel-discovery"].includes(constraintProfile?.queryMode)) return true;
+	if (policy.taskProfile === "architecture-decision" && ["vendor-blog", "forum-community", "secondary-tech-blog"].includes(candidate.sourceCategory)) return true;
 	if (anchor?.domain && candidate.domain === anchor.domain) return true;
 	if (candidate.sourceCategory && isAuthoritativeCategory(candidate.sourceCategory)) return true;
 	return false;
+}
+
+function buildSelectionPolicy(constraintProfile = {}) {
+	const taskProfile = constraintProfile.taskProfile || "general-research";
+	const requiredRoles = {
+		"exact-docs": ["exact-reference"],
+		"migration-impact": ["official-migration-doc", "release-evidence", "maintainer-or-community"],
+		"architecture-decision": ["official-architecture-doc", "official-constraint-doc", "community-tradeoff"],
+		"bugfix-investigation": ["exact-reference", "community-bug-signal"],
+		"official-vs-community": ["official-position", "community-position"],
+		"release-change": ["release-anchor"],
+		"novel-discovery": ["official-discovery-doc", "repo-signal"],
+	}[taskProfile] || ["authoritative-support"];
+	return { taskProfile, requiredRoles };
+}
+
+function buildCanonicalProof(anchor, candidates, constraintProfile = {}) {
+	const exactTerms = constraintProfile.exactTerms || [];
+	const exactMatch = exactTerms.length === 0 ? true : exactTermsMatchSource(anchor, exactTerms);
+	const strongExactMatch = exactTerms.length === 0 ? true : strongExactTermsMatchSource(anchor, exactTerms);
+	const strongerCanonicalExists = candidates.some((candidate) => candidate !== anchor && sameSourceFamily(candidate, anchor) && strongerCanonicalCandidate(candidate, anchor, constraintProfile));
+	const evidence = uniqueNonEmpty([
+		isAuthoritativeCategory(anchor?.sourceCategory) ? "authoritative-source" : undefined,
+		matchesPreferredDomains(anchor || {}, constraintProfile.preferredDomains || []) ? "preferred-domain" : undefined,
+		exactMatch ? "exact-term-match" : undefined,
+		strongExactMatch ? "strong-exact-term-match" : undefined,
+		anchor?.resultType ? `result-type:${anchor.resultType}` : undefined,
+	]);
+	const matchesProfile = anchorMatchesTaskProfile(anchor, constraintProfile);
+	const anchorQuality = strongExactMatch && matchesProfile && !strongerCanonicalExists
+		? "strong"
+		: exactMatch && matchesProfile && !strongerCanonicalExists
+			? "partial"
+			: "weak";
+	return {
+		taskProfile: constraintProfile.taskProfile,
+		anchorQuality,
+		exactTerms,
+		exactMatch,
+		strongExactMatch,
+		strongerCanonicalExists,
+		matchesTaskProfile: matchesProfile,
+		evidence,
+	};
+}
+
+function summarizeBundleCoverage(sources, policy, constraintProfile = {}) {
+	const satisfiedRoles = [];
+	for (const role of policy.requiredRoles || []) {
+		const picker = buildCoveragePickers(constraintProfile, policy).find((item) => item.role === role);
+		if (picker && sources.some((source) => picker.test(source))) satisfiedRoles.push(role);
+	}
+	const missingRoles = (policy.requiredRoles || []).filter((role) => !satisfiedRoles.includes(role));
+	return {
+		taskProfile: policy.taskProfile,
+		requiredRoles: policy.requiredRoles,
+		satisfiedRoles,
+		missingRoles,
+	};
+}
+
+function gradeResearchTrace({ candidates, filteredCandidates, selection, sources, constraintProfile, failures, confidence }) {
+	const grades = [];
+	const canonicalProof = selection?.canonicalProof || buildCanonicalProof(sources[0], candidates || [], constraintProfile);
+	grades.push({ name: "authoritative-anchor", pass: Boolean(sources[0] && isAuthoritativeCategory(sources[0].sourceCategory)), category: "anchor-quality" });
+	grades.push({ name: "canonical-anchor", pass: canonicalProof.anchorQuality !== "weak", category: "anchor-quality" });
+	if (["exact-docs", "migration-impact", "bugfix-investigation", "release-change"].includes(constraintProfile?.taskProfile)) {
+		grades.push({ name: "exact-identifier-coverage", pass: canonicalProof.exactMatch, category: "precision" });
+	}
+	grades.push({ name: "bundle-coverage", pass: (selection?.bundleCoverage?.missingRoles || []).length === 0, category: "bundle" });
+	grades.push({ name: "precision-filter-helped", pass: (filteredCandidates || []).length > 0, category: "retrieval" });
+	grades.push({ name: "confidence-calibrated", pass: confidence !== "high" || (selection?.bundleCoverage?.missingRoles || []).length === 0, category: "confidence" });
+	if ((failures || []).length > 0) grades.push({ name: "partial-failure-visible", pass: true, category: "resilience" });
+	const failuresByClass = grades.filter((grade) => !grade.pass).map((grade) => ({ class: grade.name, category: grade.category }));
+	return {
+		checks: grades,
+		failures: failuresByClass,
+		summary: failuresByClass.length === 0 ? "Selection trace passed the current retrieval quality checks." : `Selection trace failed ${failuresByClass.length} retrieval quality check(s).`,
+	};
 }
 
 function matchesPreferredDomains(source, preferredDomains) {
 	return (preferredDomains || []).some((domain) => domainMatches(source.domain || hostnameFromUrl(source.url || ""), domain));
 }
 
+function matchesResultTypes(source, resultTypes) {
+	return Boolean(source && resultTypes.includes(source.resultType));
+}
+
 function exactTermsMatchSource(source, exactTerms) {
 	if (!exactTerms?.length) return false;
 	const haystack = compactText([source.title, source.url, source.snippet, source.excerpt].filter(Boolean).join(" "));
 	return exactTerms.some((term) => haystack.includes(compactText(term)));
+}
+
+function strongExactTermsMatchSource(source, exactTerms) {
+	if (!exactTerms?.length) return false;
+	const haystack = compactText([source.title, source.url].filter(Boolean).join(" "));
+	return exactTerms.some((term) => haystack.includes(compactText(term)));
+}
+
+function sameSourceFamily(a, b) {
+	if (!a || !b) return false;
+	const aDomain = a.domain || hostnameFromUrl(a.url || "");
+	const bDomain = b.domain || hostnameFromUrl(b.url || "");
+	return aDomain === bDomain || comparableUrlKey(a.url || "") === comparableUrlKey(b.url || "");
+}
+
+function strongerCanonicalCandidate(candidate, current, constraintProfile = {}) {
+	if (!candidate || !current) return false;
+	const candidateStrong = strongExactTermsMatchSource(candidate, constraintProfile.exactTerms || []);
+	const currentStrong = strongExactTermsMatchSource(current, constraintProfile.exactTerms || []);
+	if (candidateStrong && !currentStrong) return true;
+	const candidateExact = exactTermsMatchSource(candidate, constraintProfile.exactTerms || []);
+	const currentExact = exactTermsMatchSource(current, constraintProfile.exactTerms || []);
+	if (candidateExact && !currentExact) return true;
+	if (anchorMatchesTaskProfile(candidate, constraintProfile) && !anchorMatchesTaskProfile(current, constraintProfile)) return true;
+	if (urlSpecificity(candidate.url) > urlSpecificity(current.url) + 1) return true;
+	return false;
+}
+
+function anchorMatchesTaskProfile(source, constraintProfile = {}) {
+	if (!source) return false;
+	switch (constraintProfile.taskProfile) {
+		case "exact-docs":
+			return matchesResultTypes(source, ["configuration-reference", "api-reference", "package-docs"]);
+		case "migration-impact":
+			return matchesResultTypes(source, ["migration-guide", "release-notes", "github-releases", "package-docs", "package-registry"]);
+		case "release-change":
+			return matchesResultTypes(source, ["release-notes", "github-releases", "package-registry"]);
+		case "architecture-decision":
+			return matchesResultTypes(source, ["architecture-guide", "guide"]);
+		case "bugfix-investigation":
+			return matchesResultTypes(source, ["troubleshooting", "configuration-reference", "api-reference", "package-docs"]);
+		case "novel-discovery":
+			return matchesResultTypes(source, ["getting-started", "guide", "announcement", "repository-home", "github-releases"]);
+		default:
+			return Boolean(source.resultType || source.sourceCategory);
+	}
+}
+
+function isGenericOfficialSource(source) {
+	if (!source || !isAuthoritativeCategory(source.sourceCategory)) return false;
+	const title = String(source.title || "").trim();
+	const url = String(source.url || "").toLowerCase();
+	if (/^(docs?|documentation|reference overview|next\.js|react)$/i.test(title)) return true;
+	if (/\/(docs|documentation)(?:\/)?$/.test(url)) return true;
+	if (urlSpecificity(source.url) <= 1 && !/github\.com/.test(url)) return true;
+	return false;
 }
 
 function compactText(value) {
@@ -995,6 +1261,7 @@ function shouldPreferCandidateUrl(candidateUrl, fetchedUrl) {
 	const candidateHost = hostnameFromUrl(candidateUrl);
 	const fetchedHost = hostnameFromUrl(fetchedUrl);
 	if (candidateHost && fetchedHost && candidateHost !== fetchedHost) return false;
+	if (/\/docs\//.test(candidateUrl) && !/\/docs\//.test(fetchedUrl)) return true;
 	return urlSpecificity(candidateUrl) > urlSpecificity(fetchedUrl) + 1;
 }
 
@@ -1003,8 +1270,9 @@ function shouldPreferCandidateTitle(candidateTitle, fetchedTitle, candidate, pag
 	if (!fetchedTitle) return true;
 	if (keepCandidateUrl) return true;
 	const fetchedGeneric = /^(next\.js|react|documentation|docs|reference overview)$/i.test(fetchedTitle) || fetchedTitle.split(/\s+/).length <= 2;
-	const candidateSpecific = candidateTitle.length > fetchedTitle.length || /proxyclientmaxbodysize|configuration|reference|guide|release|upgrade|migration/i.test(candidateTitle);
+	const candidateSpecific = candidateTitle.length > fetchedTitle.length || /proxyclientmaxbodysize|configuration|reference|guide|release|upgrade|migration|cachex|version/i.test(candidateTitle);
 	const pageUrl = page?.canonicalUrl || candidate?.url;
+	if ((page?.metadata?.strategy || "").includes("docs-markdown") && candidateSpecific) return true;
 	return fetchedGeneric && candidateSpecific && urlSpecificity(candidate?.url) >= urlSpecificity(pageUrl);
 }
 
@@ -1041,13 +1309,15 @@ function normalizeFailure(stage, error, context = {}) {
 	};
 }
 
-function buildRetrySuggestions({ failures, ranked, mode, constraintProfile }) {
+function buildRetrySuggestions({ failures, ranked, mode, constraintProfile, traceGrades }) {
 	const suggestions = [];
 	if ((failures || []).some((item) => item.retryable)) suggestions.push("Retry the research query with fewer sources to reduce upstream timeout risk.");
 	if ((failures || []).some((item) => item.stage === "fetch")) suggestions.push("Retry in docs-focused mode or rendered mode when important pages look incomplete.");
 	if ((failures || []).length > 0 && (constraintProfile?.preferredDomains || []).length === 0) suggestions.push("Retry with preferred official domains if you already know the primary docs or repo host.");
 	if ((ranked || []).length === 0 && mode === "technical") suggestions.push("Retry with docs-only constraints or explicit official domains to improve technical precision.");
-	return uniqueNonEmpty(suggestions).slice(0, 4);
+	if ((traceGrades?.failures || []).some((item) => item.class === "canonical-anchor" || item.class === "exact-identifier-coverage")) suggestions.push("Retry with the exact identifier quoted and an official docs or package-docs domain constraint.");
+	if ((traceGrades?.failures || []).some((item) => item.class === "bundle-coverage")) suggestions.push("Retry with a task-specific source policy such as migration guide + release notes + maintainer discussion.");
+	return uniqueNonEmpty(suggestions).slice(0, 5);
 }
 
 function inferExtractionConfidence(content) {

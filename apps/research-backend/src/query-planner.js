@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { resolveEcosystemHints } from "./ecosystem-resolver.js";
 
 const rulesPath = process.env.QUERY_NORMALIZATION_RULES_PATH
 	? resolve(process.cwd(), process.env.QUERY_NORMALIZATION_RULES_PATH)
@@ -17,8 +18,8 @@ export function buildQueryPlan(params = {}) {
 	const exactTerms = detectExactTerms(searchQuery);
 	const intent = detectIntent(normalized, params.sourceType, params.mode, language);
 	const expanded = expandTerms(normalized);
-	const entities = detectEntities(normalized);
 	const repoCandidates = detectRepoCandidates(searchQuery, normalized, intent);
+	const entities = detectEntities(searchQuery, normalized, exactTerms, repoCandidates);
 	const rawLower = searchQuery.toLowerCase().replace(/\s+/g, " ").trim();
 	const keywordQuery = toKeywordQuery(normalized);
 	const constraintProfile = buildConstraintProfile({
@@ -66,13 +67,23 @@ export function buildConstraintProfile(params = {}) {
 	const expanded = params.expanded || expandTerms(normalized);
 	const language = params.language || detectLanguage(rawQuery);
 	const intent = params.intent || detectIntent(normalized, params.sourceType, params.mode, language);
-	const entities = params.entities || detectEntities(normalized);
-	const explicitSites = extractExplicitSites(rawQuery);
 	const exactTerms = params.exactTerms || detectExactTerms(rawQuery);
 	const repoCandidates = params.repoCandidates || detectRepoCandidates(rawQuery, normalized, intent);
+	const entities = params.entities || detectEntities(rawQuery, normalized, exactTerms, repoCandidates);
+	const explicitSites = extractExplicitSites(rawQuery);
 	const years = [...new Set((expanded.match(/\b(19|20)\d{2}\b/g) || []))];
 	const topicalGroups = [];
 	const queryMode = detectQueryMode(normalized, intent, exactTerms);
+	const taskProfile = detectTaskProfile({ query: normalized, intent, queryMode, exactTerms });
+	const ecosystemResolution = resolveEcosystemHints({
+		rawQuery,
+		normalizedQuery: normalized,
+		queryMode,
+		exactTerms,
+		repoCandidates,
+		preferredDomains: params.preferredDomains || [],
+		intent,
+	});
 	return {
 		language,
 		intent,
@@ -87,11 +98,15 @@ export function buildConstraintProfile(params = {}) {
 		expandedQuery: expanded,
 		normalizedQuery: normalized,
 		queryMode,
-		needsGithubEvidence: intent === "github" || intent === "bugfix" || intent === "discovery" || ["repo", "release", "novel-discovery"].includes(queryMode) || (intent === "technical-change" && (repoCandidates.length > 0 || /\bgithub\b/.test(normalized))),
-		decisionMode: intent === "architecture",
+		taskProfile,
+		ecosystemHints: ecosystemResolution.hints,
+		packageCandidates: ecosystemResolution.packageCandidates,
+		needsGithubEvidence: intent === "github" || intent === "bugfix" || intent === "discovery" || ["repo", "release", "novel-discovery"].includes(queryMode) || taskProfile === "migration-impact" || taskProfile === "bugfix-investigation" || taskProfile === "release-change" || (intent === "technical-change" && (repoCandidates.length > 0 || /\bgithub\b/.test(normalized))),
+		decisionMode: intent === "architecture" || taskProfile === "architecture-decision",
 		canonicalPreference: detectCanonicalPreference(normalized, intent, exactTerms),
 		githubEntityType: detectGitHubEntityType(normalized, intent, queryMode),
-		requiresOfficialSource: /\bofficial\b|\bdocs?\b|\bdocumentation\b|\breference\b/.test(normalized) || (params.preferredDomains || []).length > 0,
+		requiresOfficialSource: /\bofficial\b|\bdocs?\b|\bdocumentation\b|\breference\b/.test(normalized) || (params.preferredDomains || []).length > 0 || ["exact-docs", "migration-impact", "release-change", "official-vs-community"].includes(taskProfile),
+		requiresStrongExactMatch: ["exact-docs", "bugfix-investigation"].includes(taskProfile),
 	};
 }
 
@@ -132,10 +147,15 @@ function detectIntent(query, sourceType, mode, language) {
 	if (/\b(new|novel|uncommon|niche|emerging|latest|newer)\b/.test(query) && /\b(framework|library|sdk|tool|runtime|platform|agent|mcp|server|edge)\b/.test(query)) return "discovery";
 	if (/\bvs\b|\bversus\b|\bcompare\b|trade-?off|architecture|microservices|monolith|eventbridge|sqs/.test(query)) return "architecture";
 	if (/bug|error|fix|regression|not working|troubleshooting|formdata|server actions/.test(query)) return "bugfix";
-	if (/upgrade|upgrading|migrate|migrating|migration|deprecated|breaking changes|release notes/.test(query) || mode === "technical") return "technical-change";
+	if (/upgrade|upgrading|migrate|migrating|migration|deprecated|breaking changes|release notes|changelog/.test(query)) return "technical-change";
 	if (sourceType === "news" || mode === "news") return "news";
 	if (sourceType === "docs" || mode === "best-practice") return "docs";
-	return "general";
+	if (mode === "technical") {
+		if (/\bconfig\b|\bconfiguration\b|\boption\b|\bsettings?\b|next\.config|\bapi\b|\breference\b|\bhook\b|\bfunction\b|\bdocs?\b/.test(query)) return "docs";
+		if (/\bvs\b|\bcompare\b|trade-?off|architecture/.test(query)) return "architecture";
+		return "general";
+	}
+	return language === "id" ? "general" : "general";
 }
 
 function expandTerms(query) {
@@ -149,8 +169,27 @@ function expandTerms(query) {
 	return output.trim();
 }
 
-function detectEntities(_query) {
-	return [];
+function detectEntities(rawQuery, normalizedQuery, exactTerms = [], repoCandidates = []) {
+	const entities = new Set();
+	for (const term of exactTerms) {
+		const normalized = compactEntity(term);
+		if (normalized) entities.add(normalized);
+	}
+	for (const candidate of repoCandidates) {
+		const normalized = compactEntity(candidate.split("/").pop());
+		if (normalized) entities.add(normalized);
+	}
+	for (const token of String(rawQuery || "").split(/\s+/)) {
+		if (!/[A-Z]/.test(token) && !/[_-]/.test(token)) continue;
+		const normalized = compactEntity(token);
+		if (normalized) entities.add(normalized);
+	}
+	if (entities.size === 0 && /\breact\b|\bnext\.js\b|\bnextjs\b/.test(normalizedQuery)) {
+		for (const keyword of ["react", "nextjs"]) {
+			if (normalizedQuery.includes(keyword)) entities.add(keyword);
+		}
+	}
+	return [...entities].slice(0, 4);
 }
 
 function generateVariants(context) {
@@ -204,7 +243,14 @@ function generateVariants(context) {
 		variants.add(`${baseWithoutSite} release notes`.trim());
 		variants.add(`${baseWithoutSite} changelog`.trim());
 	}
-
+	if (context.constraintProfile?.taskProfile === "architecture-decision") {
+		variants.add(`${baseWithoutSite} official architecture guidance`.trim());
+		variants.add(`${baseWithoutSite} trade-offs best practices`.trim());
+	}
+	if (context.constraintProfile?.taskProfile === "bugfix-investigation") {
+		variants.add(`${baseWithoutSite} troubleshooting`.trim());
+		variants.add(`${baseWithoutSite} known issue`.trim());
+	}
 
 	for (const domain of (context.preferredDomains || []).slice(0, 3)) {
 		variants.add(`${baseWithoutSite} site:${domain}`.trim());
@@ -214,13 +260,20 @@ function generateVariants(context) {
 		}
 	}
 
+	for (const hint of context.constraintProfile?.ecosystemHints || []) {
+		for (const queryHint of hint.queryHints || []) variants.add(queryHint);
+		for (const domain of (hint.preferredDomains || []).slice(0, 2)) {
+			variants.add(`${baseWithoutSite} site:${domain}`.trim());
+		}
+	}
+
 	variants.add(baseWithoutSite);
 	if (expandedWithoutSite) variants.add(expandedWithoutSite);
 
 	return [...variants]
 		.map((value) => value.trim())
 		.filter(Boolean)
-		.slice(0, 12);
+		.slice(0, 16);
 }
 
 function applyTemplate(template, context) {
@@ -248,16 +301,16 @@ function toKeywordQuery(query) {
 function detectQueryMode(query, intent, exactTerms = []) {
 	if (/\brepo\b|\brepository\b|\bofficial repo\b/.test(query)) return "repo";
 	if (/\breleases?\b|\bchangelog\b/.test(query)) return "release";
-	if (/\bupgrade\b|\bupgrading\b|\bmigrate\b|\bmigrating\b|\bmigration\b|\bbreaking changes?\b/.test(query)) return "migration";
 	if (/\bconfig\b|\bconfiguration\b|\boption\b|\bsettings?\b|next\.config/.test(query)) return "config";
 	if (/\bapi\b|\breference\b|\bhook\b|\bfunction\b/.test(query)) return "api";
 	if (exactTerms.some((term) => /body.?size|proxyclientmaxbodysize|middlewareclientmaxbodysize|maxbody|config/i.test(term))) return "config";
-	if (exactTerms.length > 0) return "api";
+	if (/\bupgrade\b|\bupgrading\b|\bmigrate\b|\bmigrating\b|\bmigration\b|\bbreaking changes?\b/.test(query)) return "migration";
 	if (intent === "github") return "github";
 	if (intent === "discovery") return "novel-discovery";
 	if (intent === "bugfix") return "bugfix";
-	if (intent === "technical-change") return "technical-change";
 	if (intent === "architecture") return "architecture";
+	if (intent === "technical-change") return "technical-change";
+	if (exactTerms.length > 0) return "api";
 	if (/\bdocs\b|\bofficial\b/.test(query)) return "docs";
 	return "general";
 }
@@ -265,15 +318,27 @@ function detectQueryMode(query, intent, exactTerms = []) {
 function detectCanonicalPreference(query, intent, exactTerms = []) {
 	if (/\brepo\b|\brepository\b/.test(query)) return "repo";
 	if (/\breleases?\b|\bchangelog\b/.test(query)) return "release";
-	if (/\bupgrade\b|\bupgrading\b|\bmigrate\b|\bmigrating\b|\bmigration\b|\bbreaking changes?\b/.test(query) || intent === "technical-change") return "migration";
 	if (/\bconfig\b|\bconfiguration\b|\boption\b|\bsettings?\b|next\.config/.test(query)) return "config";
 	if (/\bapi\b|\breference\b|\bhook\b|\bfunction\b/.test(query)) return "api";
 	if (exactTerms.some((term) => /body.?size|proxyclientmaxbodysize|middlewareclientmaxbodysize|maxbody|config/i.test(term))) return "config";
 	if (exactTerms.length > 0) return "api";
+	if (/\bupgrade\b|\bupgrading\b|\bmigrate\b|\bmigrating\b|\bmigration\b|\bbreaking changes?\b/.test(query) || intent === "technical-change") return "migration";
 	if (intent === "architecture") return "architecture";
 	if (intent === "bugfix") return "bugfix";
 	if (intent === "discovery") return "novel-discovery";
 	return "general";
+}
+
+function detectTaskProfile({ query, intent, queryMode, exactTerms = [] }) {
+	if (/\bofficial\b.*\bcommunity\b|\bcommunity\b.*\bofficial\b/.test(query)) return "official-vs-community";
+	if (["config", "api"].includes(queryMode) || (exactTerms.length > 0 && /\bdocs?\b|\bofficial\b|\breference\b/.test(query))) return "exact-docs";
+	if (["migration", "technical-change"].includes(queryMode) || intent === "technical-change") return "migration-impact";
+	if (queryMode === "release") return "release-change";
+	if (queryMode === "architecture" || intent === "architecture") return "architecture-decision";
+	if (queryMode === "bugfix" || intent === "bugfix") return "bugfix-investigation";
+	if (queryMode === "novel-discovery" || intent === "discovery") return "novel-discovery";
+	if (intent === "docs") return "best-practice";
+	return "general-research";
 }
 
 function detectGitHubEntityType(query, intent, queryMode) {
@@ -356,6 +421,17 @@ function normalizeRepoSegment(value) {
 
 function isGenericRepoQualifier(value) {
 	return /^(official|github|repo|repository|release|releases|changelog|compiler|sdk|framework|library|tool|project)$/i.test(String(value || ""));
+}
+
+function compactEntity(value) {
+	const normalized = String(value || "")
+		.toLowerCase()
+		.replace(/[^a-z0-9]/g, "")
+		.trim();
+	if (!normalized || normalized.length < 4) return undefined;
+	if (STOPWORDS.has(normalized)) return undefined;
+	if (["find", "show", "tell", "give", "need", "want", "about", "impact", "official", "docs", "guide", "upgrade", "migration", "release", "notes", "best", "practice"].includes(normalized)) return undefined;
+	return normalized;
 }
 
 function stripOperators(query) {

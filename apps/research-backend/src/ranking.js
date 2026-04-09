@@ -15,6 +15,17 @@ const HIGH_TRUST_SUFFIXES = [
 	"vercel.com",
 	"developer.mozilla.org",
 	"web.dev",
+	"npmjs.com",
+	"pypi.org",
+	"docs.rs",
+	"crates.io",
+	"hexdocs.pm",
+	"hex.pm",
+	"pkg.go.dev",
+	"go.dev",
+	"search.maven.org",
+	"central.sonatype.com",
+	"javadoc.io",
 ];
 
 export function rankSearchResults(results, params) {

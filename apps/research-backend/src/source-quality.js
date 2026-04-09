@@ -53,6 +53,9 @@ export function classifySourceCategory(input) {
 		if (looksLikeReleaseNotes(lowerUrl, lowerTitle)) return "release-notes";
 		return "official-docs";
 	}
+	if (["npmjs.com", "pypi.org", "crates.io", "hex.pm", "pkg.go.dev", "search.maven.org", "central.sonatype.com"].some((domain) => domainMatchesHost(host, domain))) {
+		return "official-docs";
+	}
 
 	if (host.endsWith(".go.id") || host.endsWith(".gov") || host.endsWith(".gov.uk")) return "official-government";
 	if (looksLikeReleaseNotes(lowerUrl, lowerTitle)) return "release-notes";
@@ -114,6 +117,8 @@ export function classifyResultType(input) {
 	if (/upgrade|migrate|migration/.test(combined)) return "migration-guide";
 	if (/release|changelog|release-notes|whats-new|what-s-new/.test(combined)) return "release-notes";
 	if (/troubleshoot|troubleshooting|faq|common issues|known issues|error/.test(combined)) return "troubleshooting";
+	if (/npmjs\.com\/package|pypi\.org\/project|crates\.io\/crates|hex\.pm\/packages|pkg\.go\.dev|search\.maven\.org|central\.sonatype\.com/.test(url)) return "package-registry";
+	if (/docs\.rs|hexdocs\.pm|readthedocs\.io|javadoc\.io/.test(url)) return "package-docs";
 	if (/next\.config|config|configuration|options?|settings?|proxyclientmaxbodysize|middlewareclientmaxbodysize|bodysizelimit|maxbody/.test(combined)) return "configuration-reference";
 	if (/reference|api|sdk|hook|hooks/.test(combined)) return "api-reference";
 	if (/getting-started|quickstart|introduction|intro|installation|install/.test(combined)) return "getting-started";
@@ -152,6 +157,8 @@ export function resultTypeWeight(resultType, queryMode = "general") {
 			"migration-guide": 22,
 			"release-notes": 18,
 			"github-releases": 16,
+			"package-docs": 18,
+			"package-registry": 12,
 			"repository-home": 8,
 			"github-issue": 6,
 			troubleshooting: 6,
@@ -162,11 +169,14 @@ export function resultTypeWeight(resultType, queryMode = "general") {
 			troubleshooting: 14,
 			"api-reference": 12,
 			"configuration-reference": 12,
+			"package-docs": 12,
+			"package-registry": 8,
 			examples: 8,
 		},
 		config: {
 			"configuration-reference": 22,
 			"api-reference": 16,
+			"package-docs": 14,
 			troubleshooting: 8,
 			guide: 4,
 			"getting-started": -4,
@@ -174,6 +184,7 @@ export function resultTypeWeight(resultType, queryMode = "general") {
 		api: {
 			"api-reference": 20,
 			"configuration-reference": 16,
+			"package-docs": 16,
 			troubleshooting: 8,
 			examples: 8,
 			guide: 4,
@@ -182,12 +193,15 @@ export function resultTypeWeight(resultType, queryMode = "general") {
 			"migration-guide": 18,
 			"release-notes": 16,
 			"github-releases": 14,
+			"package-docs": 16,
+			"package-registry": 10,
 			"github-issue": 10,
 			troubleshooting: 8,
 		},
 		architecture: {
 			"architecture-guide": 18,
 			guide: 8,
+			"package-docs": 8,
 			pdf: -10,
 		},
 		"novel-discovery": {
@@ -223,6 +237,7 @@ export function canonicalHintScore(input, queryMode = "general", constraintProfi
 	let score = 0;
 	if (queryMode === "technical-change" || queryMode === "migration") {
 		if (/upgrade|migration|release-notes|whats-new|changelog/.test(`${url} ${title}`)) score += 10;
+		if (/hexdocs\.pm|pypi\.org|docs\.rs|pkg\.go\.dev|javadoc\.io/.test(url)) score += 6;
 	}
 	if (queryMode === "docs" && /getting-started|quickstart|introduction|install/.test(`${url} ${title}`)) score += 8;
 	if (queryMode === "architecture" && /prescriptive-guidance|best-practices|architecture|trade-offs|tradeoffs/.test(`${url} ${title}`)) score += 10;
@@ -232,6 +247,7 @@ export function canonicalHintScore(input, queryMode = "general", constraintProfi
 	if (queryMode === "release" && /github\.com\/[^/]+\/[^/]+\/releases/.test(url)) score += 14;
 	if (queryMode === "config" && /config|configuration|options?|proxyclientmaxbodysize|middlewareclientmaxbodysize|bodysizelimit|maxbody/.test(`${url} ${title}`)) score += 14;
 	if (queryMode === "api" && /reference|api|hooks?|function/.test(`${url} ${title}`)) score += 12;
+	if (["migration", "technical-change", "api", "config", "bugfix"].includes(queryMode) && /hexdocs\.pm|pypi\.org|docs\.rs|pkg\.go\.dev|javadoc\.io|npmjs\.com\/package/.test(url)) score += 8;
 	if (constraintProfile?.requiresOfficialSource && ["official-docs", "release-notes", "github-repo"].includes(input?.sourceCategory)) score += 4;
 	return score;
 }

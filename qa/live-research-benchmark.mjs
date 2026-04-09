@@ -73,6 +73,7 @@ function selectCasesForProfile() {
 		caseSearchExactConfig,
 		caseGitHubOfficialEntityResolution,
 		caseFetchDocsMarkdownPreferred,
+		caseResearchExactConfig,
 		caseResearchCanonicalUpgrade,
 		caseCacheEffectiveness,
 	];
@@ -85,6 +86,7 @@ function selectCasesForProfile() {
 			caseFetchDocs,
 			caseFetchDocsMarkdownPreferred,
 			caseResearchBestPractice,
+			caseResearchExactConfig,
 			caseResearchCanonicalUpgrade,
 			caseResearchArchitecture,
 			caseResearchDiscovery,
@@ -225,6 +227,25 @@ async function caseResearchBestPractice() {
 	});
 }
 
+async function caseResearchExactConfig() {
+	const result = await postJsonWithRetries("/v1/research", {
+		question: "vercel next.js proxyClientMaxBodySize docs",
+		mode: "technical",
+		freshness: "year",
+		numberOfSources: 3,
+		outputDepth: "brief",
+		preferredDomains: ["nextjs.org", "vercel.com"],
+	});
+	return makeCase("live-research-exact-config", 20, [
+		check("top source is the exact config reference", /proxyclientmaxbodysize/i.test(result.sources?.[0]?.title || result.sources?.[0]?.url || ""), 5, JSON.stringify(result.sources?.[0] || {})),
+		check("task profile is exact-docs", result.metadata?.taskProfile === "exact-docs", 5, JSON.stringify({ taskProfile: result.metadata?.taskProfile, selection: result.metadata?.selection })),
+		check("canonical proof is strong", result.metadata?.selection?.canonicalProof?.anchorQuality === "strong", 5, JSON.stringify(result.metadata?.selection?.canonicalProof || {})),
+		check("trace grades pass exact identifier coverage", (result.metadata?.traceGrades?.checks || []).some((item) => item.name === "exact-identifier-coverage" && item.pass === true), 5, JSON.stringify(result.metadata?.traceGrades || {})),
+	], {
+		sample: { top: result.sources?.[0], selection: result.metadata?.selection, traceGrades: result.metadata?.traceGrades },
+	});
+}
+
 async function caseResearchCanonicalUpgrade() {
 	const result = await postJsonWithRetries("/v1/research", {
 		question: "React 19 official upgrade considerations",
@@ -234,9 +255,10 @@ async function caseResearchCanonicalUpgrade() {
 		outputDepth: "brief",
 		preferredDomains: ["react.dev"],
 	});
-	return makeCase("live-research-canonical-upgrade", 15, [
+	return makeCase("live-research-canonical-upgrade", 20, [
 		check("top source looks like upgrade guide or release notes", /upgrade|release/i.test(result.sources?.[0]?.title || "") || ["migration-guide", "release-notes"].includes(result.sources?.[0]?.resultType), 5, JSON.stringify(result.sources?.[0] || {})),
 		check("top source is react.dev official docs", result.sources?.[0]?.domain === "react.dev" && result.sources?.[0]?.sourceCategory === "official-docs", 5, JSON.stringify(result.sources?.[0] || {})),
+		check("task profile is migration-impact", result.metadata?.taskProfile === "migration-impact", 5, JSON.stringify({ taskProfile: result.metadata?.taskProfile, selection: result.metadata?.selection })),
 		check("answer mentions upgrade or migration", /upgrade|migration|breaking/i.test(result.answer || ""), 5, result.answer),
 	], {
 		sample: { titles: (result.sources || []).map((item) => item.title), resultTypes: (result.sources || []).map((item) => item.resultType) },
