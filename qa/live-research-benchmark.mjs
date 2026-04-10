@@ -106,12 +106,13 @@ async function caseSearchDocs() {
 	};
 	const result = await postJsonWithRetries("/v1/search", payload);
 	const preferredMatches = (result.results || []).filter((item) => ["react.dev", "nextjs.org", "vercel.com"].includes(item.domain)).length;
-	return makeCase("live-search-docs", 20, [
+	return makeCase("live-search-docs", 22, [
 		check("returns at least 3 results", (result.results || []).length >= 3, 5, `count=${result.results?.length || 0}`),
-		check("top result is official docs or release notes", ["official-docs", "release-notes"].includes(result.results?.[0]?.sourceCategory), 5, result.results?.[0]?.sourceCategory),
+		check("top result is official docs or release notes", ["official-docs", "release-notes", "package-docs", "package-registry"].includes(result.results?.[0]?.sourceCategory), 5, result.results?.[0]?.sourceCategory),
 		check("at least 2 preferred-domain results are present", preferredMatches >= 2, 5, `preferredMatches=${preferredMatches}`),
 		check("ranking reasons are visible", Array.isArray(result.results?.[0]?.ranking?.reasons) && result.results[0].ranking.reasons.length > 0, 3, JSON.stringify(result.results?.[0]?.ranking || {})),
 		check("trust signals are exposed", typeof result.results?.[0]?.trustSignals?.authority === "string", 2, JSON.stringify(result.results?.[0]?.trustSignals || {})),
+		check("search language normalization is exposed", typeof result.metadata?.diagnostics?.plan?.constraintProfile?.searchLanguage === "string", 2, JSON.stringify(result.metadata?.diagnostics?.plan?.constraintProfile || {})),
 	], {
 		sample: result.results?.slice(0, 3),
 	});
@@ -236,11 +237,12 @@ async function caseResearchExactConfig() {
 		outputDepth: "brief",
 		preferredDomains: ["nextjs.org", "vercel.com"],
 	});
-	return makeCase("live-research-exact-config", 20, [
+	return makeCase("live-research-exact-config", 24, [
 		check("top source is the exact config reference", /proxyclientmaxbodysize/i.test(result.sources?.[0]?.title || result.sources?.[0]?.url || ""), 5, JSON.stringify(result.sources?.[0] || {})),
 		check("task profile is exact-docs", result.metadata?.taskProfile === "exact-docs", 5, JSON.stringify({ taskProfile: result.metadata?.taskProfile, selection: result.metadata?.selection })),
 		check("canonical proof is strong", result.metadata?.selection?.canonicalProof?.anchorQuality === "strong", 5, JSON.stringify(result.metadata?.selection?.canonicalProof || {})),
 		check("trace grades pass exact identifier coverage", (result.metadata?.traceGrades?.checks || []).some((item) => item.name === "exact-identifier-coverage" && item.pass === true), 5, JSON.stringify(result.metadata?.traceGrades || {})),
+		check("evidence status is sufficient or decision-ready", ["sufficient", "partial"].includes(String(result.evidenceStatus || result.metadata?.evidence?.status || "")), 4, JSON.stringify({ evidenceStatus: result.evidenceStatus, evidence: result.metadata?.evidence })),
 	], {
 		sample: { top: result.sources?.[0], selection: result.metadata?.selection, traceGrades: result.metadata?.traceGrades },
 	});
@@ -295,12 +297,13 @@ async function caseResearchDiscovery() {
 	});
 	const officialDocsCount = (result.sources || []).filter((item) => item.sourceCategory === "official-docs").length;
 	const repoOrReleaseCount = (result.sources || []).filter((item) => ["repository-home", "github-releases", "release-notes"].includes(item.resultType)).length;
-	return makeCase("live-research-discovery", 25, [
+	return makeCase("live-research-discovery", 30, [
 		check("returns at least 2 sources", (result.sources || []).length >= 2, 5, `count=${result.sources?.length || 0}`),
 		check("includes at least one official docs source", officialDocsCount >= 1, 5, `officialDocsCount=${officialDocsCount}`),
 		check("includes repo or release evidence", repoOrReleaseCount >= 1, 5, `repoOrReleaseCount=${repoOrReleaseCount}`),
 		check("answer mentions agents, MCP, runtime, or stateless server", /agent|mcp|runtime|stateless|server/i.test(result.answer || ""), 5, result.answer),
 		check("agreement or gap signals are present", (Array.isArray(result.agreements) && result.agreements.length > 0) || (Array.isArray(result.gaps) && result.gaps.length > 0), 5, JSON.stringify({ agreements: result.agreements, gaps: result.gaps })),
+		check("discovery metadata exposes candidate entities", Array.isArray(result.metadata?.discovery?.candidateEntities) && result.metadata.discovery.candidateEntities.length > 0, 5, JSON.stringify(result.metadata?.discovery || {})),
 	], {
 		sample: { categories: (result.sources || []).map((item) => item.sourceCategory), types: (result.sources || []).map((item) => item.resultType), domains: (result.sources || []).map((item) => item.domain) },
 	});

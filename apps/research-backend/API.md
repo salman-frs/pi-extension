@@ -81,7 +81,7 @@ Response:
   ],
   "metadata": {
     "contract": "pi.web-research.search.v1",
-    "schemaVersion": "2026-04-08.v1",
+    "schemaVersion": "2026-04-09.v2",
     "outputKind": "search",
     "consumerHints": {
       "recommendedNextTools": ["fetch_url", "research_query"]
@@ -122,7 +122,7 @@ Response:
   "status": 200,
   "metadata": {
     "contract": "pi.web-research.fetch.v1",
-    "schemaVersion": "2026-04-08.v1",
+    "schemaVersion": "2026-04-09.v2",
     "outputKind": "fetch",
     "strategy": "docs-markdown-fetch",
     "sourceVariant": "docs-markdown",
@@ -205,6 +205,10 @@ Response:
     }
   ],
   "confidence": "medium",
+  "evidenceStatus": "partial",
+  "decisionReadiness": "review-required",
+  "missingEvidence": ["missing-role:maintainer-or-community"],
+  "nextActions": ["Add evidence for: maintainer-or-community."],
   "gaps": ["..."],
   "failures": [
     {
@@ -219,9 +223,9 @@ Response:
   ],
   "metadata": {
     "contract": "pi.web-research.research.v1",
-    "schemaVersion": "2026-04-08.v1",
+    "schemaVersion": "2026-04-09.v2",
     "outputKind": "research",
-    "responseSections": ["answer", "recommendation", "summary", "bestPractices", "tradeOffs", "risks", "mitigations", "selectionRationale", "confidenceRationale", "freshnessRationale", "sources", "confidence", "gaps"],
+    "responseSections": ["answer", "recommendation", "summary", "bestPractices", "tradeOffs", "risks", "mitigations", "selectionRationale", "confidenceRationale", "freshnessRationale", "sources", "confidence", "evidenceStatus", "decisionReadiness", "missingEvidence", "nextActions", "gaps"],
     "strategy": "web-research-workflow",
     "selection": {
       "anchorTitle": "React 19 Upgrade Guide",
@@ -245,6 +249,7 @@ Response:
       "constraintProfile": {
         "queryMode": "migration",
         "taskProfile": "migration-impact",
+        "searchLanguage": "en",
         "canonicalPreference": "migration",
         "exactTerms": ["useActionState"]
       }
@@ -255,6 +260,16 @@ Response:
         { "name": "bundle-coverage", "pass": true, "category": "bundle" }
       ],
       "failures": []
+    },
+    "evidence": {
+      "status": "partial",
+      "decisionReadiness": "review-required",
+      "missingEvidence": ["missing-role:maintainer-or-community"],
+      "nextActions": ["Add evidence for: maintainer-or-community."]
+    },
+    "discovery": {
+      "candidateEntities": [{ "entity": "vercel/next.js", "sourceCount": 2 }],
+      "searchLanguage": "en"
     },
     "searchDiagnostics": {
       "queryRewrites": ["..."],
@@ -318,13 +333,16 @@ Response:
   "communityPosition": "...",
   "recommendation": "...",
   "uncertainties": ["..."],
+  "comparisonAxes": [{ "axis": "correctness", "summary": "..." }],
+  "conflicts": ["correctness: ..."],
+  "claimMatrix": [{ "axis": "correctness", "summary": "..." }],
   "gaps": ["..."],
   "sources": [],
   "metadata": {
     "contract": "pi.web-research.analyze.v1",
-    "schemaVersion": "2026-04-08.v1",
+    "schemaVersion": "2026-04-09.v2",
     "outputKind": "analyze",
-    "responseSections": ["summary", "agreements", "disagreements", "strongestEvidence", "gaps", "sources"],
+    "responseSections": ["summary", "agreements", "disagreements", "strongestEvidence", "comparisonAxes", "conflicts", "claimMatrix", "gaps", "sources"],
     "comparisonMode": "official-vs-community",
     "cache": {
       "hit": false,

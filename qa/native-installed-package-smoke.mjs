@@ -64,7 +64,11 @@ function createFakeSearchServer() {
 		}
 		const q = (url.searchParams.get("q") || "").toLowerCase();
 		let results = [];
-		if (q.includes("react") && q.includes("cach")) {
+		if (q.includes("native smoke fixture react cache")) {
+			results = [
+				searchItem("Official React caching guidance", "/react-cache-official", "Official guidance on deduplication, invalidation, and freshness boundaries.", "2026-04-06T10:00:00Z", "docs", "official-docs"),
+			];
+		} else if (q.includes("react") && q.includes("cach")) {
 			results = [
 				searchItem("Official React caching guidance", "/react-cache-official", "Official guidance on deduplication, invalidation, and freshness boundaries.", "2026-04-06T10:00:00Z", "docs", "official-docs"),
 				searchItem("Next.js caching guide", "/nextjs-cache-guide", "Framework guidance on caching and revalidation tradeoffs.", "2026-04-05T09:00:00Z", "docs", "official-docs"),
@@ -208,8 +212,10 @@ async function waitUntilIdle(client, minMessageCount = 2, timeoutMs = 120000) {
 
 async function runPromptCase(client, name, prompt, expectedToolName, validate) {
 	const eventStartIndex = client.events.length;
+	const baselineState = await client.rpc({ id: `baseline-${name}`, type: "get_state" }, 30000);
+	const baselineMessageCount = Number(baselineState.data?.messageCount || 0);
 	await client.rpc({ id: `prompt-${name}`, type: "prompt", message: prompt }, 30000);
-	await waitUntilIdle(client, 2, 120000);
+	await waitUntilIdle(client, Math.max(2, baselineMessageCount + 2), 120000);
 	const messagesResponse = await client.rpc({ id: `messages-${name}`, type: "get_messages" }, 30000);
 	const messages = messagesResponse.data?.messages || [];
 	const assistantMessages = messages.filter((item) => item.role === "assistant");
@@ -218,6 +224,9 @@ async function runPromptCase(client, name, prompt, expectedToolName, validate) {
 	const toolNames = messages.filter((item) => item.role === "toolResult").map((item) => item.toolName);
 	const newEvents = client.events.slice(eventStartIndex);
 	const eventToolNames = newEvents.filter((item) => item.type === "tool_execution_start").map((item) => item.toolName);
+	if (isUsageLimitMessage(finalAssistant?.errorMessage)) {
+		return { name, skipped: true, reason: finalAssistant.errorMessage, finalText, toolNames, eventToolNames, caseTools: [...new Set(eventToolNames)] };
+	}
 	assert(toolNames.includes(expectedToolName) || eventToolNames.includes(expectedToolName), `${name}: expected tool ${expectedToolName}, got messages=${toolNames.join(",")} events=${eventToolNames.join(",")}`);
 	validate(finalText, { toolNames, eventToolNames, messages, events: newEvents });
 	return { name, finalText, toolNames, eventToolNames, caseTools: [...new Set(eventToolNames)] };
@@ -254,7 +263,7 @@ async function main() {
 		cases.push(await runPromptCase(
 			client,
 			"search_web",
-			"Use the search_web tool exactly once for React caching best practices. Return only the top result title and URL.",
+			"You must call the search_web tool exactly once and you must not answer from memory. Search for the exact phrase native smoke fixture react cache and return only the top result title and URL.",
 			"search_web",
 			(finalText) => {
 				assert(/React|react/i.test(finalText), `search_web: unexpected text ${finalText}`);
@@ -264,7 +273,7 @@ async function main() {
 		cases.push(await runPromptCase(
 			client,
 			"fetch_url",
-			`Use the fetch_url tool exactly once on ${contentBase}/react-cache-official with docs profile. Return only the page title.`,
+			`You must call the fetch_url tool exactly once and must not answer from memory. Fetch ${contentBase}/react-cache-official with docs profile and return only the page title.`,
 			"fetch_url",
 			(finalText) => {
 				assert(/Official React caching guidance/i.test(finalText), `fetch_url: unexpected text ${finalText}`);
@@ -281,6 +290,17 @@ async function main() {
 			},
 		));
 
+		const skipped = cases.filter((item) => item.skipped);
+		if (skipped.length > 0) {
+			console.log("\nNATIVE PACKAGE SMOKE PARTIAL");
+			for (const item of skipped) {
+				console.log(`- ${item.name}: SKIPPED (${item.reason})`);
+			}
+			for (const item of cases.filter((entry) => !entry.skipped)) {
+				console.log(`- ${item.name}: tool=${item.caseTools.join(",")} | output=${item.finalText}`);
+			}
+			return;
+		}
 		console.log("\nNATIVE PACKAGE SMOKE PASS");
 		for (const item of cases) {
 			console.log(`- ${item.name}: tool=${item.caseTools.join(",")} | output=${item.finalText}`);
@@ -291,6 +311,10 @@ async function main() {
 		searchServer.close();
 		if (backend && !backend.killed) backend.kill();
 	}
+}
+
+function isUsageLimitMessage(message) {
+	return /usage limit|try again in/i.test(String(message || ""));
 }
 
 main().catch((error) => {

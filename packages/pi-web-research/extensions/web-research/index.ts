@@ -125,6 +125,10 @@ interface ResearchOutput {
 	disagreements?: string[];
 	sources?: ResearchSource[];
 	confidence?: string;
+	evidenceStatus?: string;
+	decisionReadiness?: string;
+	missingEvidence?: string[];
+	nextActions?: string[];
 	gaps?: string[];
 	failures?: Array<Record<string, unknown>>;
 	retrySuggestions?: string[];
@@ -140,6 +144,9 @@ interface AnalyzeOutput {
 	communityPosition?: string;
 	recommendation?: string;
 	uncertainties?: string[];
+	comparisonAxes?: Array<Record<string, unknown>>;
+	conflicts?: string[];
+	claimMatrix?: Array<Record<string, unknown>>;
 	gaps?: string[];
 	sources?: ResearchSource[];
 	metadata?: Record<string, unknown>;
@@ -371,7 +378,7 @@ async function getConfig(): Promise<ResearchConfig> {
 	const apiKey = trimToUndefined(envValue("PI_RESEARCH_API_KEY")) ?? trimToUndefined(envValue("RESEARCH_API_KEY")) ?? trimToUndefined(storedConfig.apiKey);
 	const searxngUrl = trimToUndefined(envValue("PI_RESEARCH_SEARXNG_URL")) ?? trimToUndefined(storedConfig.searxngUrl);
 	const timeoutMs = parsePositiveInt(envValue("PI_RESEARCH_TIMEOUT_MS")) ?? storedConfig.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-	const userAgent = trimToUndefined(envValue("PI_RESEARCH_USER_AGENT")) ?? trimToUndefined(storedConfig.userAgent) ?? `${EXTENSION_NAME}/0.4.0`;
+	const userAgent = trimToUndefined(envValue("PI_RESEARCH_USER_AGENT")) ?? trimToUndefined(storedConfig.userAgent) ?? `${EXTENSION_NAME}/0.5.0`;
 	const source: ConfigSource = envConfigured
 		? "env"
 		: projectConfig
@@ -1188,6 +1195,10 @@ function normalizeResearchOutput(raw: any): ResearchOutput {
 		disagreements: arrayOfStrings(raw?.disagreements),
 		sources: normalizeResearchSources(raw?.sources ?? raw?.citations),
 		confidence: stringify(raw?.confidence),
+		evidenceStatus: stringify(raw?.evidenceStatus),
+		decisionReadiness: stringify(raw?.decisionReadiness),
+		missingEvidence: arrayOfStrings(raw?.missingEvidence),
+		nextActions: arrayOfStrings(raw?.nextActions),
 		gaps: arrayOfStrings(raw?.gaps),
 		failures: Array.isArray(raw?.failures) ? raw.failures.filter((item: unknown) => isRecord(item)) as Array<Record<string, unknown>> : undefined,
 		retrySuggestions: arrayOfStrings(raw?.retrySuggestions),
@@ -1332,6 +1343,9 @@ function normalizeAnalyzeOutput(raw: any): AnalyzeOutput {
 		communityPosition: stringify(raw?.communityPosition),
 		recommendation: stringify(raw?.recommendation),
 		uncertainties: arrayOfStrings(raw?.uncertainties),
+		comparisonAxes: Array.isArray(raw?.comparisonAxes) ? raw.comparisonAxes.filter((item: unknown) => isRecord(item)) as Array<Record<string, unknown>> : undefined,
+		conflicts: arrayOfStrings(raw?.conflicts),
+		claimMatrix: Array.isArray(raw?.claimMatrix) ? raw.claimMatrix.filter((item: unknown) => isRecord(item)) as Array<Record<string, unknown>> : undefined,
 		gaps: arrayOfStrings(raw?.gaps),
 		sources: normalizeResearchSources(raw?.sources ?? raw?.citations),
 		metadata: isRecord(raw?.metadata) ? raw.metadata : undefined,
@@ -1512,6 +1526,26 @@ function renderResearchOutput(question: string, result: ResearchOutput): string 
 		lines.push(`Confidence: ${result.confidence}`);
 		lines.push("");
 	}
+	if (result.evidenceStatus || result.decisionReadiness) {
+		if (result.evidenceStatus) lines.push(`Evidence status: ${result.evidenceStatus}`);
+		if (result.decisionReadiness) lines.push(`Decision readiness: ${result.decisionReadiness}`);
+		lines.push("");
+	}
+	if (result.missingEvidence?.length) {
+		lines.push("Missing evidence:");
+		for (const item of result.missingEvidence) lines.push(`- ${item}`);
+		lines.push("");
+	}
+	if (result.nextActions?.length) {
+		lines.push("Next actions:");
+		for (const item of result.nextActions) lines.push(`- ${item}`);
+		lines.push("");
+	}
+	const discoverySummary = summarizeDiscoveryMetadata(isRecord(result.metadata?.discovery) ? result.metadata?.discovery as Record<string, unknown> : undefined);
+	if (discoverySummary) {
+		lines.push(`Discovery summary: ${discoverySummary}`);
+		lines.push("");
+	}
 	if (result.gaps?.length) {
 		lines.push("Gaps / caveats:");
 		for (const gap of result.gaps) lines.push(`- ${gap}`);
@@ -1559,6 +1593,29 @@ function renderAnalyzeOutput(question: string, comparisonMode: string, result: A
 	if (result.uncertainties?.length) {
 		lines.push("Uncertainties:");
 		for (const item of result.uncertainties) lines.push(`- ${item}`);
+		lines.push("");
+	}
+	if (result.comparisonAxes?.length) {
+		lines.push("Comparison axes:");
+		for (const axis of result.comparisonAxes) {
+			const axisName = stringify(axis.axis) ?? stringify(axis.name) ?? "axis";
+			const summary = stringify(axis.summary);
+			lines.push(`- ${axisName}${summary ? `: ${summary}` : ""}`);
+		}
+		lines.push("");
+	}
+	if (result.conflicts?.length) {
+		lines.push("Conflicts:");
+		for (const item of result.conflicts) lines.push(`- ${item}`);
+		lines.push("");
+	}
+	if (result.claimMatrix?.length) {
+		lines.push("Claim matrix:");
+		for (const claim of result.claimMatrix.slice(0, 5)) {
+			const axisName = stringify(claim.axis) ?? "axis";
+			const summary = stringify(claim.summary);
+			lines.push(`- ${axisName}${summary ? `: ${summary}` : ""}`);
+		}
 		lines.push("");
 	}
 	if (result.sources?.length) {
@@ -1609,15 +1666,30 @@ function summarizeTraceGrades(traceGrades: Record<string, unknown> | undefined):
 
 function summarizeTrustSignals(trustSignals: Record<string, unknown> | undefined): string | undefined {
 	if (!trustSignals) return undefined;
+	const warnings = Array.isArray(trustSignals.warnings) ? trustSignals.warnings as unknown[] : [];
 	const parts = [
 		typeof trustSignals.authority === "string" ? `authority=${String(trustSignals.authority)}` : undefined,
+		typeof trustSignals.provenance === "string" ? `provenance=${String(trustSignals.provenance)}` : undefined,
 		trustSignals.official === true ? "official" : trustSignals.community === true ? "community" : undefined,
 		typeof trustSignals.freshness === "string" ? `freshness=${String(trustSignals.freshness)}` : undefined,
 		typeof trustSignals.extractionConfidence === "string" ? `extraction=${String(trustSignals.extractionConfidence)}` : undefined,
 		trustSignals.likelyOutdated === true ? "likely-outdated" : undefined,
 		typeof trustSignals.versionHint === "string" ? `version=${String(trustSignals.versionHint)}` : undefined,
+		warnings.length > 0 ? `warnings=${warnings.map((item) => String(item)).join("|")}` : undefined,
 	].filter(Boolean);
 	return parts.length > 0 ? parts.join(", ") : undefined;
+}
+
+function summarizeDiscoveryMetadata(discovery: Record<string, unknown> | undefined): string | undefined {
+	if (!discovery) return undefined;
+	const entities = Array.isArray(discovery.candidateEntities) ? discovery.candidateEntities as Array<Record<string, unknown>> : [];
+	const searchLanguage = stringify(discovery.searchLanguage);
+	const entitySummary = entities.slice(0, 3).map((item) => stringify(item.entity)).filter(Boolean).join(", ");
+	const parts = [
+		searchLanguage ? `search-language=${searchLanguage}` : undefined,
+		entitySummary ? `candidate-entities=${entitySummary}` : undefined,
+	].filter(Boolean);
+	return parts.length > 0 ? parts.join("; ") : undefined;
 }
 
 async function finalizeTextOutput(prefix: string, text: string): Promise<{ text: string; details?: { truncated?: boolean; fullOutputPath?: string } }> {

@@ -1,5 +1,6 @@
 import { fetchRenderedPage } from "../adapters/browser/playwright.js";
 import { searchSearxng } from "../adapters/discovery/searxng.js";
+import { searchGitHubApi } from "../adapters/discovery/github-api.js";
 import { searchGitHubWeb } from "../adapters/discovery/github-web.js";
 import { fetchDirect } from "../adapters/extraction/direct.js";
 import { extractStructuredContent } from "../adapters/extraction/structured.js";
@@ -43,6 +44,14 @@ export async function searchWorkflow(config, params, helpers) {
 			diagnostics.providers.push({ name: "searxng", status: searx.status, diagnostics: searx.diagnostics });
 
 			if (shouldUseGitHubSupplement(plan, params)) {
+				if (config.githubToken) {
+					const githubApiStartedAt = Date.now();
+					const githubApi = await traceStep(helpers, "search.provider.github_api", { intent: plan.intent }, () => searchGitHubApi(config, params, plan, helpers.fetchWithTimeout, helpers.logger, helpers.requestId));
+					providerResults.push(...githubApi.results);
+					providerErrors.push(...(githubApi.errors || []));
+					diagnostics.providers.push({ name: "github-api", status: githubApi.status, diagnostics: githubApi.diagnostics });
+					helpers.telemetry?.recordProviderResult?.("github-api", { ok: githubApi.status !== "failure", status: githubApi.status, latencyMs: Date.now() - githubApiStartedAt, error: githubApi.errors?.[0]?.message });
+				}
 				const githubStartedAt = Date.now();
 				const github = await traceStep(helpers, "search.provider.github", { intent: plan.intent }, () => searchGitHubWeb(config, params, plan, helpers.fetchWithTimeout, helpers.logger, helpers.requestId));
 				providerResults.push(...github.results);
@@ -281,8 +290,17 @@ export async function researchWorkflow(config, params, helpers) {
 			failures: [...(search.errors || []), ...failures],
 			confidence,
 		});
-		const retrySuggestions = buildRetrySuggestions({ failures: [...(search.errors || []), ...failures], ranked, mode: params.mode, constraintProfile: questionPlan.constraintProfile, traceGrades });
-		const recommendation = buildRecommendation({ ...params, question: questionPlan.searchQuery || params.question }, ranked, questionPlan.constraintProfile, selection);
+		const evidence = buildEvidenceAssessment({
+			sources: ranked,
+			constraintProfile: questionPlan.constraintProfile,
+			selection,
+			failures: [...(search.errors || []), ...failures],
+			traceGrades,
+			confidence,
+			disagreements,
+		});
+		const retrySuggestions = buildRetrySuggestions({ failures: [...(search.errors || []), ...failures], ranked, mode: params.mode, constraintProfile: questionPlan.constraintProfile, traceGrades, evidence });
+		const recommendation = buildRecommendation({ ...params, question: questionPlan.searchQuery || params.question }, ranked, questionPlan.constraintProfile, selection, evidence);
 		const bestPractices = buildBestPractices(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile, selection);
 		const tradeOffs = buildTradeOffs(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile, selection);
 		const risks = buildRisks(questionPlan.searchQuery || params.question, ranked, questionPlan.constraintProfile, selection);
@@ -315,6 +333,10 @@ export async function researchWorkflow(config, params, helpers) {
 			disagreements,
 			sources: ranked,
 			confidence,
+			evidenceStatus: evidence.status,
+			decisionReadiness: evidence.decisionReadiness,
+			missingEvidence: evidence.missingEvidence,
+			nextActions: evidence.nextActions,
 			gaps,
 			failures: [...(search.errors || []), ...failures],
 			retrySuggestions,
@@ -331,6 +353,8 @@ export async function researchWorkflow(config, params, helpers) {
 				traceGrades,
 				queryPlan: questionPlan,
 				taskProfile: questionPlan.constraintProfile?.taskProfile,
+				evidence,
+				discovery: buildDiscoveryMetadata(search, ranked, questionPlan),
 				partialResult: status === "partial_success",
 				rationales: {
 					selection: selectionRationale,
@@ -481,7 +505,7 @@ function buildAnswer(params, sources, agreements, disagreements, constraintProfi
 	].filter(Boolean).join(" ");
 }
 
-function buildRecommendation(params, sources, constraintProfile, selection) {
+function buildRecommendation(params, sources, constraintProfile, selection, evidence) {
 	if (sources.length === 0) {
 		return `No grounded recommendation is available for “${params.question}” because no usable sources were retrieved.`;
 	}
@@ -496,7 +520,12 @@ function buildRecommendation(params, sources, constraintProfile, selection) {
 	const bundleClause = (selection?.bundleCoverage?.missingRoles || []).length === 0
 		? ""
 		: ` Also validate missing evidence roles (${selection.bundleCoverage.missingRoles.join(", ")}) before finalizing the decision.`;
-	return `${recommendationLead}${authorityClause}${verificationClause}${bundleClause}`;
+	const readinessClause = evidence?.decisionReadiness === "keep-researching"
+		? " The current bundle is not yet decision-ready; continue researching before making a final choice."
+		: evidence?.decisionReadiness === "review-required"
+			? " The bundle is directionally useful, but human review is still recommended before action."
+			: "";
+	return `${recommendationLead}${authorityClause}${verificationClause}${bundleClause}${readinessClause}`;
 }
 
 function buildBestPractices(question, sources, constraintProfile, selection) {
@@ -652,6 +681,84 @@ function uniqueNonEmpty(values) {
 	return [...new Set((values || []).filter(Boolean))];
 }
 
+function buildEvidenceAssessment({ sources, constraintProfile, selection, failures = [], traceGrades, confidence, disagreements = [] }) {
+	const missingEvidence = [];
+	const missingRoles = selection?.bundleCoverage?.missingRoles || [];
+	if (missingRoles.length > 0) missingEvidence.push(...missingRoles.map((role) => `missing-role:${role}`));
+	if (!sources.some((source) => isAuthoritativeCategory(source.sourceCategory))) missingEvidence.push("missing-authoritative-source");
+	if ((constraintProfile?.exactTerms || []).length > 0 && !sources.some((source) => exactTermsMatchSource(source, constraintProfile.exactTerms))) missingEvidence.push("missing-exact-identifier-coverage");
+	if ((traceGrades?.failures || []).some((item) => item.class === "canonical-anchor")) missingEvidence.push("weak-canonical-anchor");
+	if ((disagreements || []).length > 1 && confidence === "low") missingEvidence.push("unresolved-contradictions");
+	if ((failures || []).length > 0) missingEvidence.push("partial-upstream-failures");
+	const uniqueMissing = uniqueNonEmpty(missingEvidence);
+	const status = sources.length === 0
+		? "insufficient"
+		: confidence === "high" && uniqueMissing.length === 0
+			? "sufficient"
+			: uniqueMissing.length <= 2 && confidence !== "low"
+				? "partial"
+				: "insufficient";
+	const decisionReadiness = status === "sufficient"
+		? "actionable"
+		: status === "partial"
+			? "review-required"
+			: "keep-researching";
+	const nextActions = uniqueNonEmpty([
+		missingRoles.length > 0 ? `Add evidence for: ${missingRoles.join(", ")}.` : undefined,
+		uniqueMissing.includes("weak-canonical-anchor") ? "Constrain the search to the canonical docs, package docs, or official repo before acting." : undefined,
+		uniqueMissing.includes("missing-exact-identifier-coverage") ? "Retry with the exact technical identifier quoted and an official-domain constraint." : undefined,
+		uniqueMissing.includes("missing-authoritative-source") ? "Add at least one primary or authoritative source before treating the result as decision-grade." : undefined,
+		uniqueMissing.includes("unresolved-contradictions") ? "Review the strongest conflicting claims manually and resolve the contradiction before deciding." : undefined,
+		uniqueMissing.includes("partial-upstream-failures") ? "Retry failed fetches or reduce the source count to recover the missing evidence." : undefined,
+	]).slice(0, 5);
+	return {
+		status,
+		decisionReadiness,
+		missingEvidence: uniqueMissing,
+		nextActions,
+		sufficient: status === "sufficient",
+	};
+}
+
+function buildDiscoveryMetadata(search, ranked, questionPlan) {
+	const discoveryPlan = questionPlan?.discoveryPlan;
+	if (!discoveryPlan && questionPlan?.constraintProfile?.taskProfile !== "novel-discovery") return undefined;
+	const entityMap = new Map();
+	for (const source of ranked || []) {
+		const key = inferDiscoveryEntityKey(source);
+		if (!key) continue;
+		const existing = entityMap.get(key) || { entity: key, sourceCount: 0, roles: new Set(), domains: new Set() };
+		existing.sourceCount += 1;
+		if (source.resultType) existing.roles.add(source.resultType);
+		if (source.domain) existing.domains.add(source.domain);
+		entityMap.set(key, existing);
+	}
+	return {
+		searchFamilies: discoveryPlan?.searchFamilies || [],
+		candidateSeeds: discoveryPlan?.candidateSeeds || [],
+		candidateEntities: [...entityMap.values()].map((item) => ({
+			entity: item.entity,
+			sourceCount: item.sourceCount,
+			roles: [...item.roles],
+			domains: [...item.domains],
+		})).sort((a, b) => b.sourceCount - a.sourceCount).slice(0, 6),
+		searchLanguage: questionPlan?.constraintProfile?.searchLanguage,
+		providerSearchCount: Array.isArray(search?.diagnostics?.searches) ? search.diagnostics.searches.length : undefined,
+	};
+}
+
+function inferDiscoveryEntityKey(source) {
+	if (!source) return undefined;
+	const url = String(source.url || "");
+	const githubMatch = url.match(/^https?:\/\/github\.com\/([^/]+\/[^/#?]+)/i);
+	if (githubMatch?.[1]) return githubMatch[1].toLowerCase();
+	if (source.domain && source.title) {
+		const compactTitle = String(source.title).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).slice(0, 4).join("-");
+		return compactTitle ? `${source.domain}:${compactTitle}` : source.domain;
+	}
+	return source.domain || undefined;
+}
+
 function computeConfidence(sources, constraintProfile, selection) {
 	if (sources.length === 0) return "low";
 	const authoritativeCount = sources.filter((source) => isAuthoritativeCategory(source.sourceCategory)).length;
@@ -715,13 +822,15 @@ async function performResearchDiscovery(config, params, questionPlan, helpers) {
 		sourceType: primarySourceType,
 		constraintProfile: questionPlan.constraintProfile,
 	});
+	const discoveryAdjusted = maybeDiversifyDiscoveryCandidates(ranked, questionPlan);
 	return {
-		status: ranked.length === 0 ? (allErrors.length ? "failure" : "no_results") : (allErrors.length ? "partial_success" : "success"),
-		results: ranked,
+		status: discoveryAdjusted.results.length === 0 ? (allErrors.length ? "failure" : "no_results") : (allErrors.length ? "partial_success" : "success"),
+		results: discoveryAdjusted.results,
 		errors: allErrors,
 		diagnostics: {
 			plan: questionPlan,
 			searches: diagnostics,
+			discovery: discoveryAdjusted.metadata,
 		},
 	};
 }
@@ -809,6 +918,38 @@ function dedupeSearchConfigs(configs) {
 		output.push(config);
 	}
 	return output;
+}
+
+function maybeDiversifyDiscoveryCandidates(results, questionPlan) {
+	if (questionPlan?.constraintProfile?.taskProfile !== "novel-discovery") {
+		return { results, metadata: undefined };
+	}
+	const clusters = new Map();
+	for (const result of results || []) {
+		const key = inferDiscoveryEntityKey(result) || comparableUrlKey(result.url);
+		const existing = clusters.get(key) || { entity: key, results: [], roles: new Set(), score: 0 };
+		existing.results.push(result);
+		existing.score += Number(result.score || 0);
+		if (result.resultType) existing.roles.add(result.resultType);
+		clusters.set(key, existing);
+	}
+	const clusterList = [...clusters.values()].sort((a, b) => {
+		const aRoleBonus = a.roles.has("repository-home") || a.roles.has("github-releases") ? 20 : 0;
+		const bRoleBonus = b.roles.has("repository-home") || b.roles.has("github-releases") ? 20 : 0;
+		return (b.score + bRoleBonus) - (a.score + aRoleBonus);
+	});
+	const diversified = [];
+	for (const cluster of clusterList) {
+		for (const item of cluster.results.sort((a, b) => Number(b.score || 0) - Number(a.score || 0))) {
+			diversified.push(item);
+		}
+	}
+	return {
+		results: diversified,
+		metadata: {
+			candidateEntities: clusterList.map((cluster) => ({ entity: cluster.entity, roleCount: cluster.roles.size, roles: [...cluster.roles], sourceCount: cluster.results.length })).slice(0, 6),
+		},
+	};
 }
 
 function shouldUseGitHubSupplement(plan, params) {
@@ -1063,6 +1204,18 @@ function buildSelectionPolicy(constraintProfile = {}) {
 
 function buildCanonicalProof(anchor, candidates, constraintProfile = {}) {
 	const exactTerms = constraintProfile.exactTerms || [];
+	if (!anchor) {
+		return {
+			taskProfile: constraintProfile.taskProfile,
+			anchorQuality: "missing",
+			exactTerms,
+			exactMatch: false,
+			strongExactMatch: false,
+			strongerCanonicalExists: false,
+			matchesTaskProfile: false,
+			evidence: [],
+		};
+	}
 	const exactMatch = exactTerms.length === 0 ? true : exactTermsMatchSource(anchor, exactTerms);
 	const strongExactMatch = exactTerms.length === 0 ? true : strongExactTermsMatchSource(anchor, exactTerms);
 	const strongerCanonicalExists = candidates.some((candidate) => candidate !== anchor && sameSourceFamily(candidate, anchor) && strongerCanonicalCandidate(candidate, anchor, constraintProfile));
@@ -1135,13 +1288,13 @@ function matchesResultTypes(source, resultTypes) {
 }
 
 function exactTermsMatchSource(source, exactTerms) {
-	if (!exactTerms?.length) return false;
+	if (!source || !exactTerms?.length) return false;
 	const haystack = compactText([source.title, source.url, source.snippet, source.excerpt].filter(Boolean).join(" "));
 	return exactTerms.some((term) => haystack.includes(compactText(term)));
 }
 
 function strongExactTermsMatchSource(source, exactTerms) {
-	if (!exactTerms?.length) return false;
+	if (!source || !exactTerms?.length) return false;
 	const haystack = compactText([source.title, source.url].filter(Boolean).join(" "));
 	return exactTerms.some((term) => haystack.includes(compactText(term)));
 }
@@ -1309,7 +1462,7 @@ function normalizeFailure(stage, error, context = {}) {
 	};
 }
 
-function buildRetrySuggestions({ failures, ranked, mode, constraintProfile, traceGrades }) {
+function buildRetrySuggestions({ failures, ranked, mode, constraintProfile, traceGrades, evidence }) {
 	const suggestions = [];
 	if ((failures || []).some((item) => item.retryable)) suggestions.push("Retry the research query with fewer sources to reduce upstream timeout risk.");
 	if ((failures || []).some((item) => item.stage === "fetch")) suggestions.push("Retry in docs-focused mode or rendered mode when important pages look incomplete.");
@@ -1317,7 +1470,8 @@ function buildRetrySuggestions({ failures, ranked, mode, constraintProfile, trac
 	if ((ranked || []).length === 0 && mode === "technical") suggestions.push("Retry with docs-only constraints or explicit official domains to improve technical precision.");
 	if ((traceGrades?.failures || []).some((item) => item.class === "canonical-anchor" || item.class === "exact-identifier-coverage")) suggestions.push("Retry with the exact identifier quoted and an official docs or package-docs domain constraint.");
 	if ((traceGrades?.failures || []).some((item) => item.class === "bundle-coverage")) suggestions.push("Retry with a task-specific source policy such as migration guide + release notes + maintainer discussion.");
-	return uniqueNonEmpty(suggestions).slice(0, 5);
+	if (evidence?.status === "insufficient") suggestions.push("Treat the current result as insufficient evidence and continue researching before making a final decision.");
+	return uniqueNonEmpty([...(evidence?.nextActions || []), ...suggestions]).slice(0, 6);
 }
 
 function inferExtractionConfidence(content) {

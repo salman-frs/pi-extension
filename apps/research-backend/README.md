@@ -87,6 +87,7 @@ pi -e extensions/web-research/src/index.ts
 - `MAX_FETCHED_SOURCES` — max sources to fetch during research, default `6`
 - `SEARXNG_URL` — discovery backend URL
 - `RESEARCH_API_KEY` — optional bearer auth
+- `GITHUB_TOKEN` — optional GitHub API token for stronger repo/release discovery
 - `USER_AGENT` — outgoing user agent string
 - `PLAYWRIGHT_ENABLED` — enable browser fallback
 - `PLAYWRIGHT_HEADLESS` — browser headless mode
@@ -109,6 +110,12 @@ pi -e extensions/web-research/src/index.ts
 - `SOURCE_QUALITY_RULES_PATH`
 - `QUERY_NORMALIZATION_RULES_PATH`
 - `DOCS_FETCH_RULES_PATH`
+
+Phase 5 additions now expose:
+- technical search-language normalization
+- discovery candidate-entity metadata
+- evidence sufficiency / decision-readiness metadata
+- claim-based comparison axes and conflicts in source analysis
 
 ## QA
 

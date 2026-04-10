@@ -87,7 +87,7 @@ pi -e extensions/web-research/src/index.ts
 Or install the publishable Pi package:
 
 ```bash
-pi install npm:pi-web-research@0.4.0
+pi install npm:pi-web-research@0.5.0
 ```
 
 Then inside Pi:
@@ -161,7 +161,7 @@ For GitHub + npm delivery, the repo includes a publishable Pi package:
 Recommended end-user install path:
 
 ```bash
-pi install npm:pi-web-research@0.4.0
+pi install npm:pi-web-research@0.5.0
 ```
 
 Update path:
@@ -175,12 +175,13 @@ pi update
 The stack is strongest today at:
 - docs-first technical lookup
 - exact config and API retrieval
-- GitHub issue / discussion / repo / release lookup
+- GitHub issue / discussion / repo / release lookup, with optional `GITHUB_TOKEN` support for stronger GitHub discovery
 - migration / release-note research
 - grounded fetch of modern docs, including markdown/LLM-text preference and structured extraction for modern docs frameworks
-- research outputs with partial-result recovery, retry suggestions, and stronger trust signals
-- task-aware research routing for exact docs, migration, architecture, bugfix, release-change, and official-vs-community queries
+- research outputs with partial-result recovery, retry suggestions, evidence sufficiency, and decision-readiness signals
+- task-aware research routing for exact docs, migration, architecture, bugfix, release-change, official-vs-community, and novel-discovery queries
 - stronger canonical selection with explicit canonical proof and retrieval trace grading
-- decision-grade source bundle coverage for hard technical research tasks
+- discovery planning metadata and candidate-entity clustering for unfamiliar technical exploration
+- claim-based comparison axes, conflicts, and support matrices for harder source comparison tasks
 
 

@@ -33,6 +33,17 @@ export function buildQueryPlan(params = {}) {
 		repoCandidates,
 		preferredDomains: params.preferredDomains || [],
 	});
+	const discoveryPlan = buildDiscoveryPlan({
+		rawQuery: searchQuery,
+		normalizedQuery: normalized,
+		intent,
+		queryMode: constraintProfile.queryMode,
+		taskProfile: constraintProfile.taskProfile,
+		entities,
+		exactTerms,
+		ecosystemHints: constraintProfile.ecosystemHints,
+		packageCandidates: constraintProfile.packageCandidates,
+	});
 	const variants = generateVariants({
 		rawQuery: searchQuery,
 		rawLower,
@@ -45,6 +56,7 @@ export function buildQueryPlan(params = {}) {
 		exactTerms,
 		repoCandidates,
 		constraintProfile,
+		discoveryPlan,
 		preferredDomains: params.preferredDomains || [],
 	});
 	return {
@@ -58,6 +70,7 @@ export function buildQueryPlan(params = {}) {
 		repoCandidates,
 		variants,
 		constraintProfile,
+		discoveryPlan,
 	};
 }
 
@@ -75,6 +88,7 @@ export function buildConstraintProfile(params = {}) {
 	const topicalGroups = [];
 	const queryMode = detectQueryMode(normalized, intent, exactTerms);
 	const taskProfile = detectTaskProfile({ query: normalized, intent, queryMode, exactTerms });
+	const searchLanguage = detectSearchLanguage({ rawQuery, normalizedQuery: normalized, language, intent, queryMode, taskProfile });
 	const ecosystemResolution = resolveEcosystemHints({
 		rawQuery,
 		normalizedQuery: normalized,
@@ -99,6 +113,7 @@ export function buildConstraintProfile(params = {}) {
 		normalizedQuery: normalized,
 		queryMode,
 		taskProfile,
+		searchLanguage,
 		ecosystemHints: ecosystemResolution.hints,
 		packageCandidates: ecosystemResolution.packageCandidates,
 		needsGithubEvidence: intent === "github" || intent === "bugfix" || intent === "discovery" || ["repo", "release", "novel-discovery"].includes(queryMode) || taskProfile === "migration-impact" || taskProfile === "bugfix-investigation" || taskProfile === "release-change" || (intent === "technical-change" && (repoCandidates.length > 0 || /\bgithub\b/.test(normalized))),
@@ -266,6 +281,9 @@ function generateVariants(context) {
 			variants.add(`${baseWithoutSite} site:${domain}`.trim());
 		}
 	}
+	for (const candidateQuery of context.discoveryPlan?.candidateQueries || []) {
+		variants.add(candidateQuery);
+	}
 
 	variants.add(baseWithoutSite);
 	if (expandedWithoutSite) variants.add(expandedWithoutSite);
@@ -339,6 +357,58 @@ function detectTaskProfile({ query, intent, queryMode, exactTerms = [] }) {
 	if (queryMode === "novel-discovery" || intent === "discovery") return "novel-discovery";
 	if (intent === "docs") return "best-practice";
 	return "general-research";
+}
+
+function detectSearchLanguage({ rawQuery, normalizedQuery, language, intent, queryMode, taskProfile }) {
+	const combined = `${rawQuery || ""} ${normalizedQuery || ""}`.toLowerCase();
+	if (/\b(bahasa indonesia|indonesian|locale:id|language:id)\b/.test(combined)) return "id";
+	if (/\b(english|locale:en|language:en)\b/.test(combined)) return "en";
+	if (["docs", "github", "discovery", "technical-change", "bugfix", "architecture"].includes(intent)) return "en";
+	if (["config", "api", "migration", "repo", "release", "bugfix", "novel-discovery", "architecture"].includes(queryMode)) return "en";
+	if (["exact-docs", "migration-impact", "release-change", "bugfix-investigation", "novel-discovery", "architecture-decision", "official-vs-community"].includes(taskProfile)) return "en";
+	return language || "en";
+}
+
+function buildDiscoveryPlan({ rawQuery, normalizedQuery, intent, queryMode, taskProfile, entities = [], exactTerms = [], ecosystemHints = [], packageCandidates = [] }) {
+	if (!(intent === "discovery" || queryMode === "novel-discovery" || taskProfile === "novel-discovery")) return undefined;
+	const combined = `${rawQuery || ""} ${normalizedQuery || ""}`.toLowerCase();
+	const capabilityTerms = ["agent", "agents", "mcp", "server", "runtime", "edge", "stateless", "stateful", "sdk", "framework", "platform"].filter((term) => combined.includes(term));
+	const searchFamilies = [
+		"official-docs",
+		"repository",
+		"release-notes",
+		"announcement",
+		"community-validation",
+	];
+	const candidateQueries = new Set();
+	const seed = [
+		...exactTerms,
+		...packageCandidates,
+		...entities,
+	].filter(Boolean).slice(0, 4);
+	const base = String(rawQuery || normalizedQuery || "").trim();
+	candidateQueries.add(`${base} official docs getting started`.trim());
+	candidateQueries.add(`${base} github repo releases`.trim());
+	candidateQueries.add(`${base} launch announcement`.trim());
+	if (capabilityTerms.length > 0) {
+		candidateQueries.add(`${capabilityTerms.join(" ")} official docs`.trim());
+		candidateQueries.add(`${capabilityTerms.join(" ")} github runtime repo`.trim());
+	}
+	for (const item of seed) {
+		candidateQueries.add(`"${item}" official docs`.trim());
+		candidateQueries.add(`"${item}" github repo`.trim());
+		candidateQueries.add(`"${item}" release notes`.trim());
+	}
+	for (const hint of ecosystemHints || []) {
+		for (const queryHint of (hint.queryHints || []).slice(0, 3)) candidateQueries.add(queryHint);
+	}
+	return {
+		mode: "novel-discovery",
+		capabilityTerms,
+		candidateSeeds: seed,
+		searchFamilies,
+		candidateQueries: [...candidateQueries].filter(Boolean).slice(0, 12),
+	};
 }
 
 function detectGitHubEntityType(query, intent, queryMode) {

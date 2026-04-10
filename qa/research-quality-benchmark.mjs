@@ -319,6 +319,16 @@ function createFakeSearchServer() {
 			results = [
 				searchItem("astral-sh/uv issue: resolver edge case", "/cachex-github-issue", "Issue discussing a resolver edge case, not the canonical repo page.", "2026-04-03T10:00:00Z", "github", "github-issue"),
 				{
+					title: "astral-sh/uv example starter",
+					url: "https://github.com/example-org/uv-example-starter",
+					content: "Starter template for demo apps built on uv.",
+					publishedDate: "2026-04-06T14:00:00Z",
+					sourceType: "github",
+					sourceCategory: "github-example-repo",
+					resultType: "example-repo",
+					engine: "fixture",
+				},
+				{
 					title: "astral-sh/uv",
 					url: "https://github.com/astral-sh/uv",
 					content: "An extremely fast Python package and project manager.",
@@ -495,6 +505,12 @@ async function runBenchmarks() {
 	], {
 		sample: exactConfig.results,
 	}));
+	results.push(makeCase("search-language-normalization", 10, [
+		check("technical query search language defaults to english", exactConfig.metadata?.diagnostics?.plan?.constraintProfile?.searchLanguage === "en", 5, JSON.stringify(exactConfig.metadata?.diagnostics?.plan?.constraintProfile || {})),
+		check("search diagnostics preserve the original detected language", typeof exactConfig.metadata?.diagnostics?.plan?.language === "string", 5, JSON.stringify(exactConfig.metadata?.diagnostics?.plan || {})),
+	], {
+		sample: exactConfig.metadata?.diagnostics?.plan,
+	}));
 
 	const exactConfigResearch = await postJson(`${backendBase}/v1/research`, {
 		question: "vercel next.js proxyClientMaxBodySize docs",
@@ -516,13 +532,14 @@ async function runBenchmarks() {
 	const repoSearch = await postJson(`${backendBase}/v1/search`, {
 		query: "astral-sh uv github repo official",
 		freshness: "year",
-		maxResults: 3,
+		maxResults: 5,
 		sourceType: "github",
 	});
-	results.push(makeCase("search-github-repo-canonical", 15, [
+	results.push(makeCase("search-github-repo-canonical", 20, [
 		check("top result is the canonical repo home", repoSearch.results?.[0]?.url === "https://github.com/astral-sh/uv", 5, repoSearch.results?.[0]?.url),
 		check("top result is repository-home", repoSearch.results?.[0]?.resultType === "repository-home", 5, repoSearch.results?.[0]?.resultType),
 		check("issue pages do not outrank repo home", !String(repoSearch.results?.[0]?.url || "").includes("/issues/"), 5, JSON.stringify((repoSearch.results || []).map((item) => item.url))),
+		check("example repo is downgraded by trust warnings", (repoSearch.results || []).some((item) => item.sourceCategory === "github-example-repo" && Array.isArray(item.trustSignals?.warnings) && item.trustSignals.warnings.includes("weak-canonicality")), 5, JSON.stringify(repoSearch.results || [])),
 	], {
 		sample: repoSearch.results,
 	}));
@@ -644,12 +661,13 @@ async function runBenchmarks() {
 		numberOfSources: 2,
 		outputDepth: "brief",
 	});
-	results.push(makeCase("research-partial-result-recovery", 15, [
+	results.push(makeCase("research-partial-result-recovery", 20, [
 		check("research returns partial success instead of total abort", ["partial_success", "success"].includes(String(partialResearch.status || "")), 5, JSON.stringify({ status: partialResearch.status, failures: partialResearch.failures })),
 		check("research preserves at least one usable source", (partialResearch.sources || []).length >= 1, 5, JSON.stringify(partialResearch.sources || [])),
 		check("failures or retry suggestions are exposed", (Array.isArray(partialResearch.failures) && partialResearch.failures.length > 0) || (Array.isArray(partialResearch.retrySuggestions) && partialResearch.retrySuggestions.length > 0), 5, JSON.stringify({ failures: partialResearch.failures, retrySuggestions: partialResearch.retrySuggestions })),
+		check("evidence sufficiency metadata is exposed", ["partial", "insufficient"].includes(String(partialResearch.evidenceStatus || "")) && Array.isArray(partialResearch.nextActions) && partialResearch.nextActions.length > 0, 5, JSON.stringify({ evidenceStatus: partialResearch.evidenceStatus, nextActions: partialResearch.nextActions, missingEvidence: partialResearch.missingEvidence })),
 	], {
-		sample: { status: partialResearch.status, failures: partialResearch.failures, retrySuggestions: partialResearch.retrySuggestions },
+		sample: { status: partialResearch.status, failures: partialResearch.failures, retrySuggestions: partialResearch.retrySuggestions, evidenceStatus: partialResearch.evidenceStatus, nextActions: partialResearch.nextActions },
 	}));
 
 	const reactUpgrade = await postJson(`${backendBase}/v1/research`, {
@@ -674,15 +692,17 @@ async function runBenchmarks() {
 		freshness: "year",
 		numberOfSources: 3,
 		outputDepth: "brief",
+		preferredDomains: ["127.0.0.1"],
 	});
-	results.push(makeCase("research-novel-tech-discovery", 20, [
+	results.push(makeCase("research-novel-tech-discovery", 25, [
 		check("returns at least 3 sources", (discovery.sources || []).length >= 3, 4, `count=${discovery.sources?.length || 0}`),
 		check("includes official docs or getting started anchor", (discovery.sources || []).some((item) => item.sourceCategory === "official-docs" && ["getting-started", "guide"].includes(item.resultType)), 4, JSON.stringify((discovery.sources || []).map((item) => ({ title: item.title, type: item.resultType, category: item.sourceCategory })))),
 		check("includes repo or release evidence", (discovery.sources || []).some((item) => ["repository-home", "github-releases"].includes(item.resultType)), 4, JSON.stringify((discovery.sources || []).map((item) => item.resultType))),
 		check("answer references stateless MCP or agents", /stateless|mcp|agent|runtime/i.test(discovery.answer || ""), 4, discovery.answer),
 		check("agreement or gap signals exist", (Array.isArray(discovery.agreements) && discovery.agreements.length > 0) || (Array.isArray(discovery.gaps) && discovery.gaps.length > 0), 4, JSON.stringify({ agreements: discovery.agreements, gaps: discovery.gaps })),
+		check("discovery metadata exposes candidate entities", Array.isArray(discovery.metadata?.discovery?.candidateEntities) && discovery.metadata.discovery.candidateEntities.length > 0, 5, JSON.stringify(discovery.metadata?.discovery || {})),
 	], {
-		sample: { answer: discovery.answer, categories: (discovery.sources || []).map((item) => item.sourceCategory), types: (discovery.sources || []).map((item) => item.resultType) },
+		sample: { answer: discovery.answer, categories: (discovery.sources || []).map((item) => item.sourceCategory), types: (discovery.sources || []).map((item) => item.resultType), discovery: discovery.metadata?.discovery },
 	}));
 
 	const analysis = await postJson(`${backendBase}/v1/analyze`, {
@@ -693,14 +713,15 @@ async function runBenchmarks() {
 			{ url: `${contentBase}/community-react-caching`, title: "Community React caching discussion" },
 		],
 	});
-	results.push(makeCase("analyze-official-vs-community", 15, [
+	results.push(makeCase("analyze-official-vs-community", 20, [
 		check("agreements exist", Array.isArray(analysis.agreements) && analysis.agreements.length > 0, 3, JSON.stringify(analysis.agreements || [])),
 		check("disagreements exist", Array.isArray(analysis.disagreements) && analysis.disagreements.length > 0, 3, JSON.stringify(analysis.disagreements || [])),
 		check("official source category is preserved", hasCategory(analysis.sources, "official-docs"), 3, (analysis.sources || []).map((item) => item.sourceCategory).join(", ")),
 		check("strongest evidence is produced", Array.isArray(analysis.strongestEvidence) && analysis.strongestEvidence.length > 0, 3, JSON.stringify(analysis.strongestEvidence || [])),
 		check("decision-support fields are present", typeof analysis.officialPosition === "string" && typeof analysis.recommendation === "string", 3, JSON.stringify({ officialPosition: analysis.officialPosition, recommendation: analysis.recommendation })),
+		check("claim-based comparison fields are present", Array.isArray(analysis.comparisonAxes) && analysis.comparisonAxes.length > 0 && Array.isArray(analysis.claimMatrix) && analysis.claimMatrix.length > 0, 5, JSON.stringify({ comparisonAxes: analysis.comparisonAxes, claimMatrix: analysis.claimMatrix })),
 	], {
-		sample: { categories: (analysis.sources || []).map((item) => item.sourceCategory), recommendation: analysis.recommendation },
+		sample: { categories: (analysis.sources || []).map((item) => item.sourceCategory), recommendation: analysis.recommendation, comparisonAxes: analysis.comparisonAxes },
 	}));
 
 	const cacheWarm = await postJson(`${backendBase}/v1/research`, {

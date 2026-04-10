@@ -283,6 +283,7 @@ async function main() {
 		assert(typeof search.results[0].sourceCategory === "string", "search should classify source categories");
 		assert(Array.isArray(search.results[0].ranking?.reasons), "search should expose ranking reasons");
 		assert(typeof search.results[0].trustSignals?.authority === "string", "search should expose trust signals");
+		assert(search.metadata?.diagnostics?.plan?.constraintProfile?.searchLanguage === "en", "technical/docs search should expose english search normalization");
 
 		const fetched = await postJson(`${backendBase}/v1/fetch`, {
 			url: `${contentBase}/official-react-caching`,
@@ -314,6 +315,8 @@ async function main() {
 		assert(typeof research.sources[0].sourceCategory === "string", "research sources should expose categories");
 		assert(typeof research.confidence === "string", "research should produce confidence");
 		assert(Array.isArray(research.retrySuggestions) || Array.isArray(research.failures) || research.status === "success", "research should expose retry/failure info when partial");
+		assert(typeof research.evidenceStatus === "string", "research should expose evidence status");
+		assert(typeof research.decisionReadiness === "string", "research should expose decision readiness");
 
 		const exactResearch = await postJson(`${backendBase}/v1/research`, {
 			question: "vercel next.js proxyClientMaxBodySize docs",
@@ -327,6 +330,7 @@ async function main() {
 		assert(exactResearch.metadata?.taskProfile === "exact-docs", "exact research should expose exact-docs task profile");
 		assert(exactResearch.metadata?.selection?.canonicalProof?.anchorQuality === "strong", "exact research should expose strong canonical proof");
 		assert((exactResearch.metadata?.traceGrades?.checks || []).some((item) => item.name === "exact-identifier-coverage" && item.pass === true), "exact research trace grades should record exact identifier coverage");
+		assert(exactResearch.metadata?.evidence?.status === "sufficient" || typeof exactResearch.evidenceStatus === "string", "exact research should expose evidence assessment");
 
 		const analyze = await postJson(`${backendBase}/v1/analyze`, {
 			question: "Compare these caching recommendations",
@@ -341,6 +345,8 @@ async function main() {
 		assert(Array.isArray(analyze.sources) && analyze.sources.length === 2, "analyze should preserve both sources");
 		assert(typeof analyze.sources[0].sourceCategory === "string", "analyze should classify source categories");
 		assert(typeof analyze.recommendation === "string" || typeof analyze.officialPosition === "string", "analyze should produce decision-support fields");
+		assert(Array.isArray(analyze.comparisonAxes) && analyze.comparisonAxes.length > 0, "analyze should expose comparison axes");
+		assert(Array.isArray(analyze.claimMatrix) && analyze.claimMatrix.length > 0, "analyze should expose claim matrix");
 
 		const debugMetrics = await fetch(`${backendBase}/debug/metrics`).then((res) => res.json());
 		assert(debugMetrics.ok === true, "debug metrics endpoint should work");

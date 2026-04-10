@@ -1,4 +1,4 @@
-export const OUTPUT_SCHEMA_VERSION = "2026-04-08.v1";
+export const OUTPUT_SCHEMA_VERSION = "2026-04-09.v2";
 
 export const OUTPUT_CONTRACTS = {
 	search: "pi.web-research.search.v1",
@@ -21,12 +21,12 @@ const DEFAULT_HINTS = {
 	research: {
 		recommendedNextTools: ["analyze_sources"],
 		suitableFor: ["general-research", "deep-research", "decision-support", "downstream-extension-input"],
-		stableFields: ["answer", "recommendation", "summary", "bestPractices", "tradeOffs", "risks", "mitigations", "selectionRationale", "confidenceRationale", "freshnessRationale", "sources", "confidence", "gaps", "failures", "retrySuggestions"],
+		stableFields: ["answer", "recommendation", "summary", "bestPractices", "tradeOffs", "risks", "mitigations", "selectionRationale", "confidenceRationale", "freshnessRationale", "sources", "confidence", "evidenceStatus", "decisionReadiness", "missingEvidence", "nextActions", "gaps", "failures", "retrySuggestions"],
 	},
 	analyze: {
 		recommendedNextTools: [],
 		suitableFor: ["source-comparison", "decision-support", "downstream-extension-input"],
-		stableFields: ["summary", "agreements", "disagreements", "strongestEvidence", "officialPosition", "communityPosition", "recommendation", "uncertainties", "gaps", "sources"],
+		stableFields: ["summary", "agreements", "disagreements", "strongestEvidence", "officialPosition", "communityPosition", "recommendation", "uncertainties", "comparisonAxes", "conflicts", "claimMatrix", "gaps", "sources"],
 	},
 };
 
@@ -58,6 +58,10 @@ export function buildResearchResponseSections(result = {}) {
 		Array.isArray(result.disagreements) && result.disagreements.length ? "disagreements" : undefined,
 		Array.isArray(result.sources) && result.sources.length ? "sources" : undefined,
 		result.confidence ? "confidence" : undefined,
+		result.evidenceStatus ? "evidenceStatus" : undefined,
+		result.decisionReadiness ? "decisionReadiness" : undefined,
+		Array.isArray(result.missingEvidence) && result.missingEvidence.length ? "missingEvidence" : undefined,
+		Array.isArray(result.nextActions) && result.nextActions.length ? "nextActions" : undefined,
 		Array.isArray(result.gaps) && result.gaps.length ? "gaps" : undefined,
 		Array.isArray(result.failures) && result.failures.length ? "failures" : undefined,
 		Array.isArray(result.retrySuggestions) && result.retrySuggestions.length ? "retrySuggestions" : undefined,
@@ -74,6 +78,9 @@ export function buildAnalyzeResponseSections(result = {}) {
 		result.communityPosition ? "communityPosition" : undefined,
 		result.recommendation ? "recommendation" : undefined,
 		Array.isArray(result.uncertainties) && result.uncertainties.length ? "uncertainties" : undefined,
+		Array.isArray(result.comparisonAxes) && result.comparisonAxes.length ? "comparisonAxes" : undefined,
+		Array.isArray(result.conflicts) && result.conflicts.length ? "conflicts" : undefined,
+		Array.isArray(result.claimMatrix) && result.claimMatrix.length ? "claimMatrix" : undefined,
 		Array.isArray(result.gaps) && result.gaps.length ? "gaps" : undefined,
 		Array.isArray(result.sources) && result.sources.length ? "sources" : undefined,
 	].filter(Boolean);

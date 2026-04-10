@@ -38,6 +38,7 @@ const server = http.createServer(async (req, res) => {
 				time: nowIso(),
 				config: {
 					searxngConfigured: Boolean(config.searxngUrl),
+					githubApiConfigured: Boolean(config.githubToken),
 					playwrightEnabled: config.playwrightEnabled,
 					structuredExtractionEnabled: config.structuredExtractionEnabled,
 					browserMode: config.browserMode,

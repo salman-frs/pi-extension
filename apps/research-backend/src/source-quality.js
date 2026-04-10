@@ -41,6 +41,8 @@ export function classifySourceCategory(input) {
 		if (lowerUrl.includes("/issues/")) return "github-issue";
 		if (lowerUrl.includes("/discussions/")) return "github-discussion";
 		if (lowerUrl.includes("/releases/") || lowerUrl.endsWith("/releases") || /\brelease\b|\bchangelog\b/.test(lowerTitle)) return "release-notes";
+		if (/\b(example|examples|template|starter|boilerplate|demo|sample)\b/.test(`${lowerTitle} ${lowerUrl}`)) return "github-example-repo";
+		if (/\b(course|workshop|tutorial|bootcamp|lab|classroom)\b/.test(`${lowerTitle} ${lowerUrl}`)) return "github-classroom-repo";
 		return "github-repo";
 	}
 
@@ -49,11 +51,14 @@ export function classifySourceCategory(input) {
 	if (MAINSTREAM_MEDIA_DOMAINS.some((domain) => domainMatchesHost(host, domain))) return "mainstream-media";
 	if (AGGREGATOR_DOMAINS.some((domain) => domainMatchesHost(host, domain))) return "aggregator-republisher";
 
+	if (["npmjs.com", "pypi.org", "crates.io", "hex.pm", "pkg.go.dev", "search.maven.org", "central.sonatype.com"].some((domain) => domainMatchesHost(host, domain))) {
+		return "package-registry";
+	}
+	if (["docs.rs", "hexdocs.pm", "readthedocs.io", "javadoc.io"].some((domain) => domainMatchesHost(host, domain))) {
+		return "package-docs";
+	}
 	if (sourceType === "docs" || looksLikeOfficialDocs(host, lowerUrl, lowerTitle)) {
 		if (looksLikeReleaseNotes(lowerUrl, lowerTitle)) return "release-notes";
-		return "official-docs";
-	}
-	if (["npmjs.com", "pypi.org", "crates.io", "hex.pm", "pkg.go.dev", "search.maven.org", "central.sonatype.com"].some((domain) => domainMatchesHost(host, domain))) {
 		return "official-docs";
 	}
 
@@ -74,6 +79,10 @@ export function authorityWeight(category) {
 			return 18;
 		case "release-notes":
 			return 14;
+		case "package-docs":
+			return 15;
+		case "package-registry":
+			return 13;
 		case "survey-organization":
 			return 14;
 		case "wire-service":
@@ -88,6 +97,10 @@ export function authorityWeight(category) {
 			return 8;
 		case "github-repo":
 			return 6;
+		case "github-example-repo":
+			return 0;
+		case "github-classroom-repo":
+			return -4;
 		case "major-media":
 			return 10;
 		case "vendor-blog":
@@ -110,7 +123,10 @@ export function classifyResultType(input) {
 		if (url.includes("/issues/")) return "github-issue";
 		if (url.includes("/discussions/")) return "github-discussion";
 		if (url.endsWith("/releases") || url.includes("/releases/")) return "github-releases";
-		if (/^https?:\/\/github\.com\/[^/]+\/[^/]+\/?$/.test(url)) return "repository-home";
+		if (/^https?:\/\/github\.com\/[^/]+\/[^/]+\/?$/.test(url)) {
+			if (/\b(example|examples|template|starter|boilerplate|demo|sample)\b/.test(combined)) return "example-repo";
+			return "repository-home";
+		}
 		return "repository-page";
 	}
 	if (url.endsWith(".pdf")) return "pdf";
@@ -257,7 +273,7 @@ export function buildTrustSignals(input = {}) {
 	const authorityScore = normalizeAuthorityScore(authorityWeight(sourceCategory));
 	const authority = authorityLevel(authorityScore);
 	const ageDays = ageInDays(input.publishedAt);
-	const official = ["official-docs", "official-government", "release-notes", "github-repo"].includes(sourceCategory);
+	const official = ["official-docs", "official-government", "release-notes", "github-repo", "package-docs", "package-registry"].includes(sourceCategory);
 	const freshness = classifyFreshness(ageDays);
 	const likelyOutdated = Boolean(ageDays != null && ageDays > 365 && ["official-docs", "release-notes", "github-repo", "vendor-blog", "secondary-tech-blog"].includes(sourceCategory));
 	const versionHint = versionHintFromUrl(input.url);
@@ -266,10 +282,12 @@ export function buildTrustSignals(input = {}) {
 		authorityScore,
 		official,
 		community: ["forum-community", "secondary-tech-blog", "github-issue", "github-discussion"].includes(sourceCategory),
+		provenance: provenanceForCategory(sourceCategory),
 		freshness,
 		ageDays,
 		likelyOutdated,
 		versionHint,
+		warnings: buildTrustWarnings({ sourceCategory, official, likelyOutdated, authority, ageDays }),
 	};
 }
 
@@ -278,6 +296,8 @@ export function isAuthoritativeCategory(category) {
 		"official-docs",
 		"official-government",
 		"release-notes",
+		"package-docs",
+		"package-registry",
 		"survey-organization",
 		"wire-service",
 		"mainstream-media",
@@ -287,6 +307,38 @@ export function isAuthoritativeCategory(category) {
 		"github-discussion",
 		"github-repo",
 	].includes(category);
+}
+
+function provenanceForCategory(category) {
+	switch (category) {
+		case "official-docs":
+		case "package-docs":
+		case "package-registry":
+		case "release-notes":
+		case "official-government":
+			return "primary";
+		case "github-repo":
+		case "github-pr":
+		case "github-issue":
+		case "github-discussion":
+		case "vendor-blog":
+			return "maintainer-adjacent";
+		case "forum-community":
+		case "secondary-tech-blog":
+			return "community";
+		default:
+			return "secondary";
+	}
+}
+
+function buildTrustWarnings({ sourceCategory, official, likelyOutdated, authority, ageDays }) {
+	const warnings = [];
+	if (["github-example-repo", "github-classroom-repo", "unknown-low-trust", "aggregator-republisher"].includes(sourceCategory)) {
+		warnings.push("weak-canonicality");
+	}
+	if (!official && authority === "low") warnings.push("weak-authority");
+	if (likelyOutdated || (typeof ageDays === "number" && ageDays > 365)) warnings.push("potentially-outdated");
+	return warnings;
 }
 
 function normalizeAuthorityScore(weight) {

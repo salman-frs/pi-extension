@@ -32,6 +32,7 @@ export async function searchSearxng(config, params, plan, fetchWithTimeout, logg
 		originalQuery: plan.originalQuery,
 		normalizedQuery: plan.normalizedQuery,
 		language: plan.language,
+		searchLanguage: plan.constraintProfile?.searchLanguage,
 		intent: plan.intent,
 		entities: plan.entities,
 		queryRewrites: queries,
@@ -43,7 +44,7 @@ export async function searchSearxng(config, params, plan, fetchWithTimeout, logg
 	for (const query of queries) {
 		const startedAt = Date.now();
 		try {
-			const results = await runQueryWithRetry(config, params, query, fetchWithTimeout, logger, requestId);
+			const results = await runQueryWithRetry(config, params, plan, query, fetchWithTimeout, logger, requestId);
 			collected.push(...results);
 			telemetry?.addEvent?.(trace, "provider.query", { provider: "searxng", query, resultCount: results.length, status: "success" });
 			telemetry?.recordProviderResult?.("searxng", { ok: true, status: "success", latencyMs: Date.now() - startedAt });
@@ -69,11 +70,11 @@ export async function searchSearxng(config, params, plan, fetchWithTimeout, logg
 	return { status, results, errors, diagnostics };
 }
 
-async function runQueryWithRetry(config, params, query, fetchWithTimeout, logger, requestId) {
+async function runQueryWithRetry(config, params, plan, query, fetchWithTimeout, logger, requestId) {
 	let lastError;
 	for (let attempt = 1; attempt <= 2; attempt++) {
 		try {
-			return await runQuery(config, params, query, fetchWithTimeout);
+			return await runQuery(config, params, plan, query, fetchWithTimeout);
 		} catch (error) {
 			lastError = error;
 			const typed = classifyUpstreamSearchError(error, { provider: "searxng", query });
@@ -85,13 +86,15 @@ async function runQueryWithRetry(config, params, query, fetchWithTimeout, logger
 	throw lastError;
 }
 
-async function runQuery(config, params, query, fetchWithTimeout) {
+async function runQuery(config, params, plan, query, fetchWithTimeout) {
 	const url = new URL(joinUrl(config.searxngUrl, "/search"));
 	url.searchParams.set("q", query);
 	url.searchParams.set("format", "json");
 	url.searchParams.set("safesearch", "0");
-	const category = sourceTypeToSearxngCategory(params.sourceType);
+	const searchLanguage = planLanguage(plan, params);
+	const category = sourceTypeToSearxngCategory(params.sourceType, searchLanguage);
 	if (category) url.searchParams.set("categories", category);
+	if (searchLanguage) url.searchParams.set("language", searchLanguage);
 	const timeRange = freshnessToSearxng(params.freshness);
 	if (timeRange) url.searchParams.set("time_range", timeRange);
 
@@ -154,7 +157,7 @@ function stringValue(value) {
 	return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function sourceTypeToSearxngCategory(sourceType) {
+function sourceTypeToSearxngCategory(sourceType, _searchLanguage) {
 	switch (sourceType) {
 		case "news":
 			return "news";
@@ -163,6 +166,10 @@ function sourceTypeToSearxngCategory(sourceType) {
 		default:
 			return undefined;
 	}
+}
+
+function planLanguage(plan, params) {
+	return plan?.constraintProfile?.searchLanguage || params?.searchLanguage || params?.constraintProfile?.searchLanguage || undefined;
 }
 
 function freshnessToSearxng(freshness) {

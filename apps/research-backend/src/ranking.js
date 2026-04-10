@@ -124,6 +124,7 @@ function scoreResult(result, context) {
 	if (sourceType === "docs") contributions.push([context.sourceTypePreference === "docs" ? 16 : 10, "docs-source"]);
 	if (sourceType === "github") contributions.push([context.sourceTypePreference === "github" || ["repo", "release", "novel-discovery"].includes(queryMode) ? 6 : -8, "github-source"]);
 	if (looksLikeRepoBlob(result)) contributions.push([context.sourceTypePreference === "github" ? 0 : -10, "github-blob-penalty"]);
+	if (["github-example-repo", "github-classroom-repo", "unknown-low-trust", "aggregator-republisher"].includes(sourceCategory)) contributions.push([-12, "weak-provenance-penalty"]);
 
 	const authority = authorityWeight(sourceCategory);
 	if (authority) contributions.push([authority, `category:${sourceCategory}`]);
@@ -218,8 +219,8 @@ function repoCandidateScore(result, repoCandidates, queryMode) {
 
 function officialIntentScore(result, constraintProfile, preferredMatch) {
 	if (!constraintProfile?.requiresOfficialSource) return 0;
-	if (["official-docs", "release-notes", "official-government", "github-repo"].includes(result.sourceCategory)) return preferredMatch ? 12 : 8;
-	if (["forum-community", "secondary-tech-blog", "unknown-low-trust", "aggregator-republisher"].includes(result.sourceCategory)) return -8;
+	if (["official-docs", "release-notes", "official-government", "github-repo", "package-docs", "package-registry"].includes(result.sourceCategory)) return preferredMatch ? 12 : 8;
+	if (["forum-community", "secondary-tech-blog", "unknown-low-trust", "aggregator-republisher", "github-example-repo", "github-classroom-repo"].includes(result.sourceCategory)) return -8;
 	return 0;
 }
 
@@ -237,7 +238,7 @@ function canonicalPreferenceScore(result, constraintProfile, queryMode) {
 	}
 	if (preference === "migration") {
 		if (resultType === "migration-guide") return 20;
-		if (["release-notes", "github-releases"].includes(resultType)) return 14;
+		if (["release-notes", "github-releases", "package-docs", "package-registry"].includes(resultType)) return 14;
 	}
 	if (preference === "config") {
 		if (resultType === "configuration-reference") return 20;

@@ -44,7 +44,7 @@ Optional:
 ```bash
 export PI_RESEARCH_API_KEY=...
 export PI_RESEARCH_TIMEOUT_MS=30000
-export PI_RESEARCH_USER_AGENT=web-research/0.4.0
+export PI_RESEARCH_USER_AGENT=web-research/0.5.0
 ```
 
 ### Load the extension
@@ -58,7 +58,7 @@ pi -e extensions/web-research/src/index.ts
 Or install the publishable Pi package:
 
 ```bash
-pi install npm:pi-web-research@0.4.0
+pi install npm:pi-web-research@0.5.0
 ```
 
 ## Runtime modes

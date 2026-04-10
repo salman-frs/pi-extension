@@ -18,7 +18,7 @@ Every primary response now includes metadata with:
 - `consumerHints`
 
 Current schema version:
-- `2026-04-08.v1`
+- `2026-04-09.v2`
 
 Contracts:
 - search: `pi.web-research.search.v1`
@@ -96,6 +96,10 @@ Top-level shape:
 - `disagreements[]`
 - `sources[]`
 - `confidence`
+- `evidenceStatus`
+- `decisionReadiness`
+- `missingEvidence[]`
+- `nextActions[]`
 - `gaps[]`
 - `failures[]`
 - `retrySuggestions[]`
@@ -108,8 +112,11 @@ Important metadata:
 - `metadata.selection.bundleCoverage`
 - `metadata.queryPlan`
 - `metadata.queryPlan.constraintProfile.taskProfile`
+- `metadata.queryPlan.constraintProfile.searchLanguage`
 - `metadata.searchDiagnostics`
 - `metadata.traceGrades`
+- `metadata.discovery`
+- `metadata.evidence`
 - `metadata.partialResult`
 - `metadata.rationales`
 - `metadata.consumerHints`
@@ -131,6 +138,9 @@ Top-level shape:
 - `communityPosition`
 - `recommendation`
 - `uncertainties[]`
+- `comparisonAxes[]`
+- `conflicts[]`
+- `claimMatrix[]`
 - `gaps[]`
 - `sources[]`
 - `metadata`
